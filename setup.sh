@@ -73,6 +73,11 @@ echo "📋 Python version: $PYTHON_VERSION"
 # Check and install required Python system packages
 MISSING_PACKAGES=()
 
+# For Ubuntu 24.04+ and modern Debian, we need different packages
+UBUNTU_VERSION=""
+if command_exists lsb_release; then
+    UBUNTU_VERSION=$(lsb_release -rs 2>/dev/null || echo "")
+fi
 # Check for pip
 if ! command_exists pip3 && ! python_module_exists pip; then
     echo "❌ pip not found"
@@ -82,15 +87,16 @@ fi
 # Check for venv module
 if ! python_module_exists venv; then
     echo "❌ venv module not found"
-    MISSING_PACKAGES+=("python${PYTHON_VERSION}-venv")
+    MISSING_PACKAGES+=("python3-venv")
 fi
 
 # Check for ensurepip (needed for venv creation)
 if ! python_module_exists ensurepip; then
     echo "❌ ensurepip module not found"
-    # On some systems, this is part of python3-venv, on others it's separate
+    # On Ubuntu 24.04+, ensurepip is usually included with python3-venv
+    # But we might need additional packages
     if [[ "$MACHINE" == "Linux" ]]; then
-        MISSING_PACKAGES+=("python${PYTHON_VERSION}-distutils")
+        MISSING_PACKAGES+=("python3-venv")  # This often includes ensurepip
     fi
 fi
 
@@ -103,14 +109,12 @@ if [ ${#MISSING_PACKAGES[@]} -gt 0 ]; then
     echo "🔍 Verifying installations..."
     if ! python_module_exists venv; then
         echo "❌ venv module still not available after installation"
-        echo "Trying alternative package names..."
-        install_system_packages "python3-venv" || true
+        echo "This is unusual - python3-venv should provide the venv module"
     fi
     
     if ! python_module_exists ensurepip; then
         echo "❌ ensurepip module still not available"
-        echo "Trying to install additional packages..."
-        install_system_packages "python3-distutils" "python3-lib2to3" || true
+        echo "This is expected on some systems - we'll use alternative methods"
     fi
 fi
 
@@ -139,7 +143,7 @@ if [ "$VERIFICATION_FAILED" = true ]; then
     echo "Please try installing manually:"
     echo "  sudo apt install python3 python3-pip python3-venv python3-distutils"
     echo "  # or for your specific Python version:"
-    echo "  sudo apt install python${PYTHON_VERSION}-venv python${PYTHON_VERSION}-distutils"
+    echo "  sudo apt install python3-venv python3-distutils python3-setuptools"
     echo ""
     echo "Continuing with fallback installation method..."
 fi
