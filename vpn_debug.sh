@@ -91,6 +91,19 @@ ipsec statusall
 echo ""
 
 echo "=== Environment Variables Check ==="
+echo "Checking if .env file exists:"
+if [ -f /app/.env ]; then
+    echo "✓ .env file found at /app/.env"
+    echo "File size: $(stat -c%s /app/.env) bytes"
+    echo "First few lines (non-sensitive):"
+    head -3 /app/.env | grep -v "PASSWORD\|KEY" || echo "No non-sensitive lines to show"
+else
+    echo "✗ .env file NOT found at /app/.env"
+    echo "Available files in /app/:"
+    ls -la /app/
+fi
+echo ""
+echo "Environment variables from shell:"
 echo "VPN_SERVERS (first 50 chars): ${VPN_SERVERS:0:50}..."
 echo "DB_HOST: $DB_HOST"
 echo "Monitor ID: $MONITOR_ID"
@@ -121,20 +134,64 @@ echo ""
 echo "=== Manual Connection Attempt ==="
 echo "Attempting to bring up connection 'vpntest'..."
 
+# Create a proper secrets file using Python (same as monitor does)
+echo "=== Creating Secrets File with Python ==="
+python3 -c "
+import os
+from dotenv import load_dotenv
+load_dotenv('/app/.env')
+servers = os.getenv('VPN_SERVERS', '').split(',')
+if servers and servers[0]:
+    parts = servers[0].strip().split(':')
+    if len(parts) >= 5:
+        server_ip = parts[1]
+        shared_key = parts[4]
+        secrets_content = f'''# strongSwan IPsec secrets file
+{server_ip} %any : PSK \"{shared_key}\"
+%any {server_ip} : PSK \"{shared_key}\"
+'''
+        with open('/etc/ipsec.secrets', 'w') as f:
+            f.write(secrets_content)
+        print(f'✓ Created secrets file for {server_ip}')
+        print(f'✓ Shared key length: {len(shared_key)} characters')
+    else:
+        print('✗ Invalid server configuration format')
+else:
+    print('✗ No VPN servers found')
+" 2>/dev/null || echo "Failed to create secrets file with Python"
+
+# Set proper permissions
+chmod 600 /etc/ipsec.secrets
+
+echo ""
+echo "=== Secrets File After Python Creation ==="
+if [ -f /etc/ipsec.secrets ]; then
+    echo "Secrets file content (with masked keys):"
+    cat /etc/ipsec.secrets | sed 's/PSK "[^"]*"/PSK "***MASKED***"/g'
+else
+    echo "No secrets file found"
+fi
+echo ""
+
 # Start tcpdump in background to capture traffic
 echo "Starting packet capture..."
-timeout 30 tcpdump -i any -n host $SERVER_IP and port 500 -w /tmp/vpn_debug.pcap &
+timeout 30 tcpdump -i any -n host $SERVER_IP and \( port 500 or port 4500 or port 1701 \) -w /tmp/vpn_debug.pcap 2>/dev/null &
 TCPDUMP_PID=$!
 
 # Wait for tcpdump to start
 sleep 2
 
+# Reload strongSwan to pick up new secrets
+echo "Reloading strongSwan with new secrets..."
+ipsec reload
+sleep 2
+
 # Try to bring up the connection
 echo "Executing: ipsec up vpntest"
-ipsec up vpntest 2>&1 | tee /tmp/ipsec_up_output.log
+timeout 20 ipsec up vpntest 2>&1 | tee /tmp/ipsec_up_output.log
 
 # Wait a bit for connection attempt
-sleep 10
+sleep 5
 
 # Check status
 echo ""
@@ -143,16 +200,21 @@ ipsec statusall
 echo ""
 
 # Stop tcpdump
-kill $TCPDUMP_PID 2>/dev/null || echo "tcpdump already stopped"
-wait $TCPDUMP_PID 2>/dev/null || true
+if [ ! -z "$TCPDUMP_PID" ]; then
+    kill $TCPDUMP_PID 2>/dev/null || echo "tcpdump already stopped"
+    wait $TCPDUMP_PID 2>/dev/null || true
+fi
 
 echo "=== Packet Capture Analysis ==="
 if [ -f /tmp/vpn_debug.pcap ]; then
-    echo "Packets captured:"
-    tcpdump -r /tmp/vpn_debug.pcap -n | head -20
+    echo "Total packets captured:"
+    tcpdump -r /tmp/vpn_debug.pcap -n 2>/dev/null | wc -l
     echo ""
-    echo "Packet count by type:"
-    tcpdump -r /tmp/vpn_debug.pcap -n | cut -d' ' -f1-5 | sort | uniq -c
+    echo "First 10 packets:"
+    tcpdump -r /tmp/vpn_debug.pcap -n 2>/dev/null | head -10
+    echo ""
+    echo "Packet summary by port:"
+    tcpdump -r /tmp/vpn_debug.pcap -n 2>/dev/null | grep -E "(500|4500|1701)" | cut -d' ' -f1-5 | sort | uniq -c
 else
     echo "No packet capture file found"
 fi
@@ -183,85 +245,44 @@ fi
 echo ""
 
 echo "=== Testing Different IKE Versions ==="
-echo "Current configuration uses IKEv1. Let's test if server supports IKEv2..."
-
-# Create a temporary IKEv2 configuration
-cat > /tmp/ipsec_ikev2.conf << EOF
-config setup
-    charondebug="ike 2, knl 1, cfg 1"
-    strictcrlpolicy=no
-    uniqueids=no
-
-conn vpntest_ikev2
-    type=transport
-    keyexchange=ikev2
-    left=%defaultroute
-    leftprotoport=17/1701
-    right=$SERVER_IP
-    rightprotoport=17/1701
-    authby=psk
-    auto=add
-    ike=aes256-sha256-modp2048,aes128-sha256-modp2048!
-    esp=aes256-sha256,aes128-sha256!
-    rekey=no
-    leftid=%any
-    rightid=$SERVER_IP
-EOF
-
-echo "Testing with IKEv2 configuration..."
-cp /tmp/ipsec_ikev2.conf /etc/ipsec.conf
-ipsec reload
-sleep 3
-echo "Attempting IKEv2 connection:"
-timeout 15 ipsec up vpntest_ikev2 2>&1 || echo "IKEv2 connection failed"
+echo "Skipping IKE version tests for now - focusing on basic connection"
 echo ""
 
-echo "=== Testing Different Encryption Algorithms ==="
-# Test with weaker encryption (some older servers only support this)
-cat > /tmp/ipsec_weak.conf << EOF
-config setup
-    charondebug="ike 2, knl 1, cfg 1"
-    strictcrlpolicy=no
-    uniqueids=no
-
-conn vpntest_weak
-    type=transport
-    keyexchange=ikev1
-    left=%defaultroute
-    leftprotoport=17/1701
-    right=$SERVER_IP
-    rightprotoport=17/1701
-    authby=psk
-    auto=add
-    ike=3des-md5-modp1024!
-    esp=3des-md5!
-    rekey=no
-    leftid=%any
-    rightid=$SERVER_IP
-    aggressive=yes
-EOF
-
-echo "Testing with weaker encryption (3DES-MD5)..."
-cp /tmp/ipsec_weak.conf /etc/ipsec.conf
-ipsec reload
-sleep 3
-echo "Attempting weak encryption connection:"
-timeout 15 ipsec up vpntest_weak 2>&1 || echo "Weak encryption connection failed"
+echo "=== Connection Attempt Results Analysis ==="
+if [ -f /tmp/ipsec_up_output.log ]; then
+    echo "IPSec up command output:"
+    cat /tmp/ipsec_up_output.log
+    echo ""
+    
+    # Analyze common error patterns
+    if grep -q "no proposal chosen" /tmp/ipsec_up_output.log; then
+        echo "❌ ISSUE: Encryption algorithm mismatch"
+        echo "   The server rejected our encryption proposals"
+    elif grep -q "authentication failed" /tmp/ipsec_up_output.log; then
+        echo "❌ ISSUE: Authentication failed"
+        echo "   Likely incorrect shared key"
+    elif grep -q "timeout" /tmp/ipsec_up_output.log; then
+        echo "❌ ISSUE: Connection timeout"
+        echo "   Server may be unreachable or firewall blocking"
+    elif grep -q "ESTABLISHED" /tmp/ipsec_up_output.log; then
+        echo "✅ SUCCESS: IPSec tunnel established!"
+    else
+        echo "⚠️  Unknown result - check output above"
+    fi
+else
+    echo "No connection attempt log found"
+fi
 echo ""
 
 echo "=== Cleanup ==="
 echo "Stopping all VPN connections..."
-ipsec down vpntest 2>/dev/null || true
-ipsec down vpntest_ikev2 2>/dev/null || true
-ipsec down vpntest_weak 2>/dev/null || true
+timeout 5 ipsec down vpntest 2>/dev/null || true
 ipsec stop
 echo ""
 
 echo "=== Debug Files Created ==="
 echo "- /tmp/ipsec_up_output.log - IPSec up command output"
 echo "- /tmp/vpn_debug.pcap - Network packet capture"
-echo "- /tmp/ipsec_ikev2.conf - IKEv2 test configuration"
-echo "- /tmp/ipsec_weak.conf - Weak encryption test configuration"
 echo ""
 
 echo "=== Recommendations ==="

@@ -220,6 +220,8 @@ class VPNMonitor:
 
     def _create_ipsec_config(self, server: Dict[str, str], config_dir: str) -> str:
         """Create IPSec configuration for strongSwan."""
+        logger.debug(f"Creating IPSec config for {server['name']} ({server['ip']})")
+        
         config_file = '/etc/ipsec.conf'
         secrets_file = '/etc/ipsec.secrets'
         
