@@ -185,10 +185,6 @@ class VPNMonitor:
             subprocess.run(['ipsec', 'down', 'vpntest'], capture_output=True, timeout=5)
             subprocess.run(['ipsec', 'stop'], capture_output=True, timeout=10)
             
-            # Also try to stop starter directly
-            subprocess.run(['killall', 'starter'], capture_output=True, timeout=5)
-            subprocess.run(['killall', 'charon'], capture_output=True, timeout=5)
-            
             # Stop xl2tpd processes
             subprocess.run(['killall', 'xl2tpd'], capture_output=True, timeout=5)
             
@@ -200,19 +196,14 @@ class VPNMonitor:
 
     def _create_ipsec_config(self, server: Dict[str, str], config_dir: str) -> str:
         """Create IPSec configuration for strongSwan."""
-        # Use system directories that strongSwan expects and ensure they exist
-        os.makedirs('/etc/ipsec.d', exist_ok=True)
-        os.makedirs('/etc/ipsec.d/cacerts', exist_ok=True)
-        os.makedirs('/etc/ipsec.d/certs', exist_ok=True)
-        os.makedirs('/etc/ipsec.d/private', exist_ok=True)
-        
+        # Use system directories that strongSwan expects
         config_file = '/etc/ipsec.conf'
         secrets_file = '/etc/ipsec.secrets'
         
-        # Simplified but more compatible IPSec configuration
+        # IPSec configuration compatible with most L2TP/IPSec servers
         config_content = f"""
 config setup
-    charondebug="ike 1, knl 1, cfg 1"
+    charondebug="ike 1, knl 1, cfg 0"
     strictcrlpolicy=no
     uniqueids=no
 
@@ -229,29 +220,19 @@ conn vpntest
     esp=aes256-sha1,aes128-sha1,3des-sha1!
     pfs=no
     rekey=no
-    dpdaction=clear
-    dpddelay=300s
-    dpdtimeout=90s
+    leftid=%any
+    rightid=%any
 """
         
         with open(config_file, 'w') as f:
             f.write(config_content)
         
-        # Set proper permissions
-        os.chmod(config_file, 0o644)
-        
         # Create secrets file
-        secrets_content = f"""# /etc/ipsec.secrets - strongSwan IPsec secrets file
-{server['ip']} %any : PSK "{server['shared_key']}"
-%any {server['ip']} : PSK "{server['shared_key']}"
 %any %any : PSK "{server['shared_key']}"
 """
         with open(secrets_file, 'w') as f:
             f.write(secrets_content)
         os.chmod(secrets_file, 0o600)
-        
-        logger.debug(f"Created IPSec config at {config_file}")
-        logger.debug(f"Config content: {config_content}")
         
         return config_file
 
@@ -358,97 +339,44 @@ lcp-echo-failure 4
             
             logger.debug(f"Starting IPSec for {server['name']}")
             
-            # Completely stop and clean up any existing strongSwan processes
-            self._stop_all_vpn_connections()
-            time.sleep(2)
+            # Start strongSwan
+            ipsec_cmd = ['ipsec', 'start']
+            ipsec_result = subprocess.run(ipsec_cmd, capture_output=True, timeout=15)
             
-            # Verify configuration files exist and are readable
-            if not os.path.exists('/etc/ipsec.conf'):
+            if ipsec_result.returncode != 0:
                 connection_time = int((time.time() - start_time) * 1000)
-                return False, connection_time, "IPSec configuration file not found"
-            
-            # Test configuration syntax
-            test_cmd = ['ipsec', 'checkconfig']
-            test_result = subprocess.run(test_cmd, capture_output=True, timeout=5)
-            logger.debug(f"Config test result: {test_result.returncode}")
-            logger.debug(f"Config test output: {test_result.stdout.decode()}")
-            if test_result.stderr:
-                logger.debug(f"Config test stderr: {test_result.stderr.decode()}")
-            
-            # Start strongSwan daemon
-            logger.debug("Starting strongSwan daemon")
-            start_cmd = ['ipsec', 'start']
-            start_result = subprocess.run(start_cmd, capture_output=True, timeout=15)
-            
-            logger.debug(f"Start result: {start_result.returncode}")
-            logger.debug(f"Start stdout: {start_result.stdout.decode()}")
-            logger.debug(f"Start stderr: {start_result.stderr.decode()}")
-            
-            if start_result.returncode != 0:
-                connection_time = int((time.time() - start_time) * 1000)
-                error_msg = start_result.stderr.decode() + " " + start_result.stdout.decode()
+                error_msg = ipsec_result.stderr.decode() + " " + ipsec_result.stdout.decode()
                 return False, connection_time, f"IPSec start failed: {error_msg.strip()}"
             
-            # Wait for daemon to initialize
+            # Wait for strongSwan to initialize
             time.sleep(3)
             
-            # Verify daemon is running
-            status_cmd = ['ipsec', 'status']
-            status_result = subprocess.run(status_cmd, capture_output=True, timeout=5)
-            logger.debug(f"Status check: {status_result.returncode}")
-            logger.debug(f"Status output: {status_result.stdout.decode()}")
-            
-            if status_result.returncode != 0:
-                connection_time = int((time.time() - start_time) * 1000)
-                return False, connection_time, "strongSwan daemon failed to start properly"
-            
-            # Load/reload configuration
-            logger.debug("Reloading configuration")
-            reload_cmd = ['ipsec', 'rereadall']
+            # Reload configuration and bring up connection
+            logger.debug(f"Reloading IPSec configuration for {server['name']}")
+            reload_cmd = ['ipsec', 'reload']
             reload_result = subprocess.run(reload_cmd, capture_output=True, timeout=10)
             
-            logger.debug(f"Reread result: {reload_result.returncode}")
-            logger.debug(f"Reread stdout: {reload_result.stdout.decode()}")
-            logger.debug(f"Reread stderr: {reload_result.stderr.decode()}")
+            if reload_result.returncode != 0:
+                logger.warning(f"IPSec reload warning: {reload_result.stderr.decode()}")
             
-            # Also reload secrets
-            secrets_cmd = ['ipsec', 'rereadsecrets']
-            secrets_result = subprocess.run(secrets_cmd, capture_output=True, timeout=5)
-            logger.debug(f"Secrets reload: {secrets_result.returncode}")
+            logger.debug(f"Bringing up IPSec connection for {server['name']}")
             
-            # Check if connection is loaded
-            listconns_cmd = ['ipsec', 'listconns']
-            listconns_result = subprocess.run(listconns_cmd, capture_output=True, timeout=5)
-            logger.debug(f"List connections: {listconns_result.stdout.decode()}")
-            
-            if 'vpntest' not in listconns_result.stdout.decode():
-                connection_time = int((time.time() - start_time) * 1000)
-                return False, connection_time, "Connection 'vpntest' not found in configuration"
-            
-            # Now try to bring up the connection
-            logger.debug("Attempting to bring up connection")
             up_cmd = ['ipsec', 'up', 'vpntest']
             up_result = subprocess.run(up_cmd, capture_output=True, timeout=15)
-            
-            logger.debug(f"Up result: {up_result.returncode}")
-            logger.debug(f"Up stdout: {up_result.stdout.decode()}")
-            logger.debug(f"Up stderr: {up_result.stderr.decode()}")
             
             if up_result.returncode != 0:
                 connection_time = int((time.time() - start_time) * 1000)
                 error_msg = up_result.stderr.decode() + " " + up_result.stdout.decode()
                 
-                # Get detailed status for debugging
-                statusall_cmd = ['ipsec', 'statusall']
-                statusall_result = subprocess.run(statusall_cmd, capture_output=True, timeout=5)
-                statusall_info = statusall_result.stdout.decode() if statusall_result.returncode == 0 else "No detailed status available"
+                # Get status for debugging
+                status_cmd = ['ipsec', 'status']
+                status_result = subprocess.run(status_cmd, capture_output=True, timeout=5)
+                status_info = status_result.stdout.decode() if status_result.returncode == 0 else "No status available"
                 
-                logger.error(f"IPSec connection failed. Detailed status: {statusall_info}")
-                
-                return False, connection_time, f"IPSec connection failed: {error_msg.strip()}. Status: {statusall_info}"
+                return False, connection_time, f"IPSec connection failed: {error_msg.strip()}. Status: {status_info}"
             
             # Wait for IPSec to establish
-            time.sleep(5)
+            time.sleep(2)
             
             # Verify IPSec is established before proceeding to L2TP
             ipsec_status = self._check_ipsec_status()
@@ -511,48 +439,22 @@ lcp-echo-failure 4
     def _test_basic_connectivity(self, ip: str) -> bool:
         """Test basic network connectivity to IP."""
         try:
-            logger.debug(f"Testing basic connectivity to {ip}")
             ping_cmd = ['ping', '-c', '1', '-W', '5', ip]
             ping_result = subprocess.run(ping_cmd, capture_output=True, timeout=10)
-            logger.debug(f"Ping to {ip}: {ping_result.returncode}")
-            if ping_result.returncode != 0:
-                logger.debug(f"Ping stdout: {ping_result.stdout.decode()}")
-                logger.debug(f"Ping stderr: {ping_result.stderr.decode()}")
-            else:
-                logger.debug(f"Ping successful: {ping_result.stdout.decode()}")
             return ping_result.returncode == 0
-        except Exception as e:
-            logger.debug(f"Ping exception: {e}")
+        except:
             return False
 
     def _check_ipsec_status(self) -> bool:
         """Check if IPSec tunnel is established."""
         try:
-            # Check multiple status commands for better debugging
             status_cmd = ['ipsec', 'status']
             status_result = subprocess.run(status_cmd, capture_output=True, timeout=5)
-            
-            statusall_cmd = ['ipsec', 'statusall']
-            statusall_result = subprocess.run(statusall_cmd, capture_output=True, timeout=5)
-            
-            logger.debug(f"IPSec status: {status_result.stdout.decode()}")
-            logger.debug(f"IPSec statusall: {statusall_result.stdout.decode()}")
-            
             if status_result.returncode == 0:
                 output = status_result.stdout.decode()
                 # Look for established connections
                 if 'ESTABLISHED' in output or 'INSTALLED' in output:
-                    logger.debug("IPSec tunnel found as ESTABLISHED/INSTALLED")
                     return True
-                    
-            # Also check if there are any active connections
-            if statusall_result.returncode == 0:
-                statusall_output = statusall_result.stdout.decode()
-                if 'ESTABLISHED' in statusall_output or 'INSTALLED' in statusall_output:
-                    logger.debug("IPSec tunnel found in statusall")
-                    return True
-                    
-            logger.debug("No established IPSec tunnel found")
             return False
         except Exception:
             return False
