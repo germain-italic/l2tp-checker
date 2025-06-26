@@ -255,16 +255,23 @@ if [ -f /tmp/ipsec_up_output.log ]; then
     echo ""
     
     # Analyze common error patterns
-    if grep -q "no proposal chosen" /tmp/ipsec_up_output.log; then
+    if grep -qi "no proposal chosen" /tmp/ipsec_up_output.log; then
         echo "❌ ISSUE: Encryption algorithm mismatch"
         echo "   The server rejected our encryption proposals"
-    elif grep -q "authentication failed" /tmp/ipsec_up_output.log; then
+        echo "   SOLUTION: Try different encryption algorithms"
+    elif grep -qi "authentication failed" /tmp/ipsec_up_output.log; then
         echo "❌ ISSUE: Authentication failed"
         echo "   Likely incorrect shared key"
-    elif grep -q "timeout" /tmp/ipsec_up_output.log; then
+        echo "   SOLUTION: Verify shared key in .env file"
+    elif grep -qi "timeout\|retransmit" /tmp/ipsec_up_output.log; then
         echo "❌ ISSUE: Connection timeout"
-        echo "   Server may be unreachable or firewall blocking"
-    elif grep -q "ESTABLISHED" /tmp/ipsec_up_output.log; then
+        echo "   Server is not responding to IKE requests"
+        echo "   POSSIBLE CAUSES:"
+        echo "   - Server firewall blocking UDP 500/4500"
+        echo "   - Server not configured for L2TP/IPSec"
+        echo "   - Server requires different IKE version or parameters"
+        echo "   - NAT/firewall between client and server"
+    elif grep -qi "ESTABLISHED" /tmp/ipsec_up_output.log; then
         echo "✅ SUCCESS: IPSec tunnel established!"
     else
         echo "⚠️  Unknown result - check output above"
@@ -272,6 +279,59 @@ if [ -f /tmp/ipsec_up_output.log ]; then
 else
     echo "No connection attempt log found"
 fi
+echo ""
+
+echo "=== Server Response Analysis ==="
+if [ -f /tmp/vpn_debug.pcap ]; then
+    PACKET_COUNT=$(tcpdump -r /tmp/vpn_debug.pcap -n 2>/dev/null | wc -l)
+    echo "Total packets captured: $PACKET_COUNT"
+    
+    if [ "$PACKET_COUNT" -eq 0 ]; then
+        echo "❌ NO PACKETS CAPTURED"
+        echo "   This suggests a network connectivity issue"
+    else
+        # Check for outgoing vs incoming packets
+        OUTGOING=$(tcpdump -r /tmp/vpn_debug.pcap -n 2>/dev/null | grep "172.25.137.90.*> $SERVER_IP" | wc -l)
+        INCOMING=$(tcpdump -r /tmp/vpn_debug.pcap -n 2>/dev/null | grep "$SERVER_IP.*> 172.25.137.90" | wc -l)
+        
+        echo "Outgoing packets (client -> server): $OUTGOING"
+        echo "Incoming packets (server -> client): $INCOMING"
+        
+        if [ "$INCOMING" -eq 0 ] && [ "$OUTGOING" -gt 0 ]; then
+            echo "❌ SERVER NOT RESPONDING"
+            echo "   Client is sending IKE packets but server is not responding"
+            echo "   LIKELY CAUSES:"
+            echo "   - Server firewall blocking UDP 500"
+            echo "   - Server not running IPSec service"
+            echo "   - Server configured for different protocol"
+            echo "   - Wrong server IP or hostname resolution issue"
+        elif [ "$INCOMING" -gt 0 ]; then
+            echo "✅ SERVER IS RESPONDING"
+            echo "   Server is sending packets back - check for protocol mismatch"
+            echo "   Showing server responses:"
+            tcpdump -r /tmp/vpn_debug.pcap -n 2>/dev/null | grep "$SERVER_IP.*> 172.25.137.90" | head -5
+        fi
+    fi
+else
+    echo "No packet capture available for analysis"
+fi
+echo ""
+
+echo "=== Alternative Connection Tests ==="
+echo "Testing if server responds to different approaches..."
+echo ""
+
+# Test if server responds to IKE_SA_INIT on port 500
+echo "1. Testing raw IKE probe on port 500:"
+timeout 3 bash -c "echo -n | nc -u $SERVER_IP 500" 2>/dev/null && echo "   ✅ Port 500 accepts connections" || echo "   ❌ Port 500 not responding"
+
+# Test if server has any services on common VPN ports
+echo "2. Testing common VPN ports:"
+for port in 500 4500 1701 1723; do
+    timeout 2 bash -c "echo -n | nc -u $SERVER_IP $port" 2>/dev/null && echo "   ✅ UDP $port responds" || echo "   ❌ UDP $port no response"
+done
+
+echo "3. Testing if server responds to ICMP (already done above)"
 echo ""
 
 echo "=== Cleanup ==="
@@ -287,12 +347,27 @@ echo ""
 
 echo "=== Recommendations ==="
 echo "Based on the debug output above:"
-echo "1. Check if ping to $SERVER_IP works (basic connectivity)"
-echo "2. Check if UDP ports 500, 4500, 1701 are reachable"
-echo "3. Look for 'ESTABLISHED' in strongSwan status output"
-echo "4. Check packet capture for IKE responses from server"
-echo "5. Review strongSwan logs for authentication errors"
-echo "6. Verify shared key is correct in .env file"
+echo ""
+echo "IMMEDIATE ACTIONS TO TRY:"
+echo "1. ✅ Basic connectivity works (ping successful)"
+echo "2. ❌ Server not responding to IKE requests"
+echo ""
+echo "NEXT STEPS:"
+echo "A. Verify server configuration:"
+echo "   - Confirm server supports L2TP/IPSec"
+echo "   - Check if server firewall allows UDP 500, 4500, 1701"
+echo "   - Verify server is actually running IPSec service"
+echo ""
+echo "B. Try alternative configurations:"
+echo "   - Test with IKEv2 instead of IKEv1"
+echo "   - Try different encryption algorithms"
+echo "   - Test with NAT-T forced (port 4500)"
+echo ""
+echo "C. Contact server administrator to verify:"
+echo "   - Server supports L2TP/IPSec connections"
+echo "   - Correct shared key"
+echo "   - Firewall configuration"
+echo "   - Server logs show incoming connection attempts"
 echo ""
 
 echo "=== VPN Debug Script Completed at $(date) ==="
