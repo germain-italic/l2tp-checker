@@ -381,14 +381,11 @@ lcp-echo-failure 4
             logger.debug("Starting strongSwan daemon")
             start_cmd = ['ipsec', 'start']
             start_result = subprocess.run(start_cmd, capture_output=True, timeout=15)
-                logger.debug("Trying regular IPSec start")
-                ipsec_cmd = ['ipsec', 'start']
-                ipsec_result = subprocess.run(ipsec_cmd, capture_output=True, timeout=15)
-                
+            
             logger.debug(f"Start result: {start_result.returncode}")
             logger.debug(f"Start stdout: {start_result.stdout.decode()}")
             logger.debug(f"Start stderr: {start_result.stderr.decode()}")
-                
+            
             if start_result.returncode != 0:
                 connection_time = int((time.time() - start_time) * 1000)
                 error_msg = start_result.stderr.decode() + " " + start_result.stdout.decode()
