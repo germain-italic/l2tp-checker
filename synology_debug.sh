@@ -437,7 +437,6 @@ config setup
     charondebug="ike 2, knl 1, cfg 1"
     strictcrlpolicy=no
     uniqueids=no
-    nat_traversal=yes
 
 conn windows11_exact
     type=transport
@@ -448,18 +447,18 @@ conn windows11_exact
     rightprotoport=17/1701
     authby=psk
     auto=add
-    ike=des-md5-modp768,3des-md5-modp768,des-sha1-modp768!
-    esp=des-md5,3des-md5,des-sha1!
+    ike=aes256-sha1-modp2048,aes256-sha1-modp1024!
+    esp=aes256-sha1!
     rekey=no
     leftid=%any
     rightid=$SERVER_IP
-    aggressive=yes
+    aggressive=no
     ikelifetime=480m
     keylife=60m
-    dpdaction=none
+    dpdaction=clear
     margintime=9m
     rekeyfuzz=100%
-    forceencaps=no
+    forceencaps=yes
 EOF
 
 ipsec reload
