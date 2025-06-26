@@ -200,12 +200,14 @@ class VPNMonitor:
         config_file = '/etc/ipsec.conf'
         secrets_file = '/etc/ipsec.secrets'
         
-        # IPSec configuration compatible with most L2TP/IPSec servers
+        # Try multiple IPSec configurations for better compatibility
+        # This configuration is more aggressive and tries multiple cipher combinations
         config_content = f"""
 config setup
-    charondebug="ike 1, knl 1, cfg 0"
+    charondebug="ike 2, knl 2, cfg 2, net 2, asn 2, enc 2, lib 2, esp 2, tls 2, tnc 2, imc 2, imv 2, pts 2"
     strictcrlpolicy=no
     uniqueids=no
+    cachecrls=no
 
 conn vpntest
     type=transport
@@ -216,12 +218,14 @@ conn vpntest
     rightprotoport=17/1701
     authby=psk
     auto=add
-    ike=aes256-sha1-modp1024,aes128-sha1-modp1024,3des-sha1-modp1024!
-    esp=aes256-sha1,aes128-sha1,3des-sha1!
+    ike=aes256-sha1-modp1024,aes128-sha1-modp1024,3des-sha1-modp1024,aes256-md5-modp1024,aes128-md5-modp1024,3des-md5-modp1024!
+    esp=aes256-sha1,aes128-sha1,3des-sha1,aes256-md5,aes128-md5,3des-md5!
     pfs=no
     rekey=no
-    leftid=%any
-    rightid=%any
+    leftid=
+    rightid=
+    aggressive=yes
+    compress=no
 """
         
         with open(config_file, 'w') as f:
@@ -344,6 +348,10 @@ lcp-echo-failure 4
             ipsec_cmd = ['ipsec', 'start']
             ipsec_result = subprocess.run(ipsec_cmd, capture_output=True, timeout=15)
             
+            logger.debug(f"IPSec start result: {ipsec_result.returncode}")
+            logger.debug(f"IPSec start stdout: {ipsec_result.stdout.decode()}")
+            logger.debug(f"IPSec start stderr: {ipsec_result.stderr.decode()}")
+            
             if ipsec_result.returncode != 0:
                 connection_time = int((time.time() - start_time) * 1000)
                 error_msg = ipsec_result.stderr.decode() + " " + ipsec_result.stdout.decode()
@@ -357,6 +365,10 @@ lcp-echo-failure 4
             reload_cmd = ['ipsec', 'reload']
             reload_result = subprocess.run(reload_cmd, capture_output=True, timeout=10)
             
+            logger.debug(f"IPSec reload result: {reload_result.returncode}")
+            logger.debug(f"IPSec reload stdout: {reload_result.stdout.decode()}")
+            logger.debug(f"IPSec reload stderr: {reload_result.stderr.decode()}")
+            
             if reload_result.returncode != 0:
                 logger.warning(f"IPSec reload warning: {reload_result.stderr.decode()}")
             
@@ -364,6 +376,10 @@ lcp-echo-failure 4
             
             up_cmd = ['ipsec', 'up', 'vpntest']
             up_result = subprocess.run(up_cmd, capture_output=True, timeout=15)
+            
+            logger.debug(f"IPSec up result: {up_result.returncode}")
+            logger.debug(f"IPSec up stdout: {up_result.stdout.decode()}")
+            logger.debug(f"IPSec up stderr: {up_result.stderr.decode()}")
             
             if up_result.returncode != 0:
                 connection_time = int((time.time() - start_time) * 1000)
@@ -373,6 +389,13 @@ lcp-echo-failure 4
                 status_cmd = ['ipsec', 'status']
                 status_result = subprocess.run(status_cmd, capture_output=True, timeout=5)
                 status_info = status_result.stdout.decode() if status_result.returncode == 0 else "No status available"
+                
+                # Also get statusall for more detailed info
+                statusall_cmd = ['ipsec', 'statusall']
+                statusall_result = subprocess.run(statusall_cmd, capture_output=True, timeout=5)
+                statusall_info = statusall_result.stdout.decode() if statusall_result.returncode == 0 else "No detailed status available"
+                
+                logger.error(f"IPSec connection failed. Detailed status: {statusall_info}")
                 
                 return False, connection_time, f"IPSec connection failed: {error_msg.strip()}. Status: {status_info}"
             
@@ -442,6 +465,9 @@ lcp-echo-failure 4
         try:
             ping_cmd = ['ping', '-c', '1', '-W', '5', ip]
             ping_result = subprocess.run(ping_cmd, capture_output=True, timeout=10)
+            logger.debug(f"Ping to {ip}: {ping_result.returncode}")
+            if ping_result.returncode != 0:
+                logger.debug(f"Ping failed: {ping_result.stderr.decode()}")
             return ping_result.returncode == 0
         except:
             return False
@@ -449,13 +475,31 @@ lcp-echo-failure 4
     def _check_ipsec_status(self) -> bool:
         """Check if IPSec tunnel is established."""
         try:
+            # Check multiple status commands for better debugging
             status_cmd = ['ipsec', 'status']
             status_result = subprocess.run(status_cmd, capture_output=True, timeout=5)
+            
+            statusall_cmd = ['ipsec', 'statusall']
+            statusall_result = subprocess.run(statusall_cmd, capture_output=True, timeout=5)
+            
+            logger.debug(f"IPSec status: {status_result.stdout.decode()}")
+            logger.debug(f"IPSec statusall: {statusall_result.stdout.decode()}")
+            
             if status_result.returncode == 0:
                 output = status_result.stdout.decode()
                 # Look for established connections
                 if 'ESTABLISHED' in output or 'INSTALLED' in output:
+                    logger.debug("IPSec tunnel found as ESTABLISHED/INSTALLED")
                     return True
+                    
+            # Also check if there are any active connections
+            if statusall_result.returncode == 0:
+                statusall_output = statusall_result.stdout.decode()
+                if 'ESTABLISHED' in statusall_output or 'INSTALLED' in statusall_output:
+                    logger.debug("IPSec tunnel found in statusall")
+                    return True
+                    
+            logger.debug("No established IPSec tunnel found")
             return False
         except Exception:
             return False
