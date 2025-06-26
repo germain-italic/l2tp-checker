@@ -181,8 +181,6 @@ class VPNMonitor:
     def _stop_all_vpn_connections(self):
         """Stop all VPN connections."""
         try:
-            # Stop strongSwan connections more thoroughly
-            subprocess.run(['ipsec', 'auto', '--down', 'vpntest'], capture_output=True, timeout=5)
             # Stop strongSwan connections and service
             subprocess.run(['ipsec', 'down', 'vpntest'], capture_output=True, timeout=5)
             subprocess.run(['ipsec', 'stop'], capture_output=True, timeout=10)
@@ -226,7 +224,7 @@ conn vpntest
     right={server['ip']}
     rightprotoport=17/1701
     authby=psk
-    auto=start
+    auto=add
     ike=aes256-sha1-modp1024,aes128-sha1-modp1024,3des-sha1-modp1024!
     esp=aes256-sha1,aes128-sha1,3des-sha1!
     pfs=no
@@ -424,17 +422,12 @@ lcp-echo-failure 4
             logger.debug(f"List connections: {listconns_result.stdout.decode()}")
             
             if 'vpntest' not in listconns_result.stdout.decode():
-                # Try to manually add the connection
-                logger.debug("Connection not found, trying to add manually")
-                add_cmd = ['ipsec', 'auto', '--add', 'vpntest']
-                add_result = subprocess.run(add_cmd, capture_output=True, timeout=10)
-                logger.debug(f"Add result: {add_result.returncode}")
-                logger.debug(f"Add stdout: {add_result.stdout.decode()}")
-                logger.debug(f"Add stderr: {add_result.stderr.decode()}")
+                connection_time = int((time.time() - start_time) * 1000)
+                return False, connection_time, "Connection 'vpntest' not found in configuration"
             
             # Now try to bring up the connection
             logger.debug("Attempting to bring up connection")
-            up_cmd = ['ipsec', 'auto', '--up', 'vpntest']
+            up_cmd = ['ipsec', 'up', 'vpntest']
             up_result = subprocess.run(up_cmd, capture_output=True, timeout=15)
             
             logger.debug(f"Up result: {up_result.returncode}")
