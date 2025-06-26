@@ -227,12 +227,13 @@ class VPNMonitor:
         
         # IPSec configuration optimized for Synology DSM7 without SHA2-256 mode
         # Uses legacy encryption for maximum compatibility with Windows/macOS
-        # Updated to match Windows 11 L2TP/IPSec client parameters exactly
+        # EXACTLY matches Windows 11 L2TP/IPSec client parameters
         config_content = f"""
 config setup
     charondebug="ike 2, knl 1, cfg 1"
     strictcrlpolicy=no
     uniqueids=no
+    nat_traversal=yes
 
 conn vpntest
     type=transport
@@ -243,17 +244,18 @@ conn vpntest
     rightprotoport=17/1701
     authby=psk
     auto=add
-    ike=aes256-sha1-modp1024,aes128-sha1-modp1024,3des-sha1-modp1024!
-    esp=aes256-sha1,aes128-sha1,3des-sha1!
+    ike=3des-sha1-modp1024,aes256-sha1-modp1024,aes128-sha1-modp1024!
+    esp=3des-sha1,aes256-sha1,aes128-sha1!
     rekey=no
-    leftid=
-    rightid=
+    leftid=%any
+    rightid={server['ip']}
     aggressive=yes
-    ikelifetime=8h
-    keylife=1h
-    dpdaction=none
+    ikelifetime=28800s
+    keylife=3600s
+    dpdaction=clear
+    dpddelay=300s
+    dpdtimeout=90s
     forceencaps=no
-    nat_traversal=yes
 """
         
         with open(config_file, 'w') as f:

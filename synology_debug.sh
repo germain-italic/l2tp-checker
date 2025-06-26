@@ -421,7 +421,6 @@ EOF
 ipsec reload
 sleep 2
 echo "Trying weakest encryption (3DES-MD5)..."
-timeout 15 ipsec up synology_weak 2>&1 | head -10
 
 echo ""
 echo "2. Testing without aggressive mode:"
@@ -456,6 +455,7 @@ EOF
 ipsec reload
 sleep 2
 echo "Trying main mode (non-aggressive)..."
+timeout 15 ipsec up synology_main 2>&1 | head -10
 
 echo ""
 echo "=== Cleanup ==="
