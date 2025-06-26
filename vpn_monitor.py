@@ -228,6 +228,7 @@ class VPNMonitor:
         # IPSec configuration for Synology DSM7 - FIXED peer ID issue
         # Based on server logs showing "no suitable connection for peer '@germain'"
         # UPDATED: Match Windows 11 exactly - Main Mode with AES-256-SHA1-MODP2048
+        # FINAL FIX: Optimize timing and L2TP integration
         config_content = f"""
 config setup
     charondebug="ike 2, knl 1, cfg 1"
@@ -249,12 +250,14 @@ conn vpntest
     leftid=%any
     rightid=%any
     aggressive=no
-    ikelifetime=8h
-    keylife=1h
+    ikelifetime=3600s
+    keylife=3600s
     dpdaction=clear
     dpddelay=30s
     dpdtimeout=120s
-    forceencaps=yes
+    forceencaps=no
+    margintime=9m
+    rekeyfuzz=100%
 """
         
         with open(config_file, 'w') as f:
@@ -613,7 +616,7 @@ password {server['password']}
             logger.debug(f"IPSec up command output: {up_output}")
             
             # Wait for connection establishment with more frequent checks
-            max_wait = 20
+            max_wait = 15
             wait_time = 0
             connection_established = False
             
@@ -622,7 +625,7 @@ password {server['password']}
                     logger.debug(f"IPSec established after {wait_time} seconds")
                     connection_established = True
                     break
-                time.sleep(1)
+                time.sleep(0.5)
                 wait_time += 1
             
             if not connection_established:
@@ -644,14 +647,14 @@ password {server['password']}
             xl2tpd_cmd = ['xl2tpd', '-c', '/etc/xl2tpd/xl2tpd.conf', '-C', '/var/run/xl2tpd/l2tp-control']
             xl2tpd_process = subprocess.Popen(xl2tpd_cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
             
-            # Wait for xl2tpd to start properly
-            time.sleep(3)
+            # Wait for xl2tpd to start properly (reduced timing)
+            time.sleep(2)
             
             # Attempt L2TP connection
             try:
                 # Check if control file exists
                 if not os.path.exists('/var/run/xl2tpd/l2tp-control'):
-                    time.sleep(2)  # Wait a bit more
+                    time.sleep(1)  # Wait a bit more
                 
                 if os.path.exists('/var/run/xl2tpd/l2tp-control'):
                     # Send connect command via echo to control socket
@@ -662,7 +665,7 @@ password {server['password']}
                     logger.debug("L2TP control file not found")
                 
                 # Wait for connection establishment
-                time.sleep(10)
+                time.sleep(5)
                 
             except Exception as e:
                 logger.debug(f"L2TP connection attempt failed: {e}")

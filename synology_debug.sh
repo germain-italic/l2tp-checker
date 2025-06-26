@@ -180,6 +180,7 @@ echo "Using username for peer ID: $USERNAME"
 # Server logs show: "peer ID is ID_FQDN: '@germain'" - strongSwan adds @ to quoted strings
 # Solution: Use %any and let authentication happen via PSK secrets
         # UPDATED: Match Windows 11 exactly - use Main Mode with AES-256
+        # FINAL FIX: Optimize timing for immediate Quick Mode
 cat > /etc/ipsec.conf << EOF
 config setup
     charondebug="ike 2, knl 1, cfg 1"
@@ -201,12 +202,14 @@ conn windows11_match
     leftid=%any
     rightid=%any
     aggressive=no
-    ikelifetime=480m
-    keylife=60m
+    ikelifetime=3600s
+    keylife=3600s
     dpdaction=clear
     dpddelay=30s
     dpdtimeout=120s
-    forceencaps=yes
+    forceencaps=no
+    margintime=9m
+    rekeyfuzz=100%
 EOF
 
 echo "✓ Created Synology-compatible IPSec configuration"
@@ -349,9 +352,8 @@ TCPDUMP_PID=$!
 sleep 2
 
 echo "Attempting connection with Synology-compatible parameters..."
-timeout 25 ipsec up windows11_match 2>&1 | tee /tmp/synology_up_output.log
+timeout 15 ipsec up windows11_match 2>&1 | tee /tmp/synology_up_output.log
 
-sleep 5
 
 echo ""
 echo "=== Connection Status ==="
