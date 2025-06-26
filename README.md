@@ -35,13 +35,20 @@ A cross-platform VPN monitoring system that tests L2TP/IPSec VPN connections and
 
 4. **Test the monitor:**
    ```bash
+   # If using virtual environment (modern systems):
+   ./run_monitor.sh
+   
+   # Or if installed globally:
    python3 vpn_monitor.py
    ```
 
 5. **Add to crontab for every 5 minutes:**
    ```bash
    crontab -e
-   # Add this line:
+   # Add this line (adjust path as needed):
+   # For virtual environment:
+   */5 * * * * cd /path/to/vpn-monitor && ./run_monitor.sh >/dev/null 2>&1
+   # For global installation:
    */5 * * * * cd /path/to/vpn-monitor && python3 vpn_monitor.py >/dev/null 2>&1
    ```
 
@@ -100,6 +107,7 @@ And two views for easy reporting:
 ### Dependencies
 
 - Python 3.6+
+- python3-venv (for modern Debian/Ubuntu systems)
 - PyMySQL
 - python-dotenv
 - requests
@@ -136,6 +144,11 @@ ORDER BY last_seen DESC;
 ## Troubleshooting
 
 ### Common Issues
+
+1. **Externally Managed Environment Error**
+   - This is normal on modern Debian/Ubuntu systems
+   - The setup script will automatically create a virtual environment
+   - Use `./run_monitor.sh` instead of `python3 vpn_monitor.py`
 
 1. **Database Connection Failed**
    - Verify database credentials in .env
