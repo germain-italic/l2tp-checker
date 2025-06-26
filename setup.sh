@@ -60,13 +60,44 @@ if [ "$USE_VENV" = true ]; then
     # Check if python3-venv is available
     if ! python3 -m venv --help &> /dev/null; then
         echo "❌ python3-venv is required but not available"
-        echo ""
-        echo "To fix this, run one of these commands:"
-        echo "  sudo apt install python3-venv"
-        echo "  sudo apt install python3.12-venv"
-        echo ""
-        echo "Then run this setup script again: ./setup.sh"
-        exit 1
+        echo "🔧 Attempting to install python3-venv..."
+        
+        # Try to install python3-venv automatically
+        if command -v apt &> /dev/null; then
+            # Debian/Ubuntu systems
+            echo "📦 Installing python3-venv using apt..."
+            if sudo apt update && sudo apt install -y python3-venv; then
+                echo "✓ python3-venv installed successfully"
+            else
+                echo "❌ Failed to install python3-venv automatically"
+                echo "Please run manually: sudo apt install python3-venv"
+                exit 1
+            fi
+        elif command -v yum &> /dev/null; then
+            # RHEL/CentOS/Fedora systems
+            echo "📦 Installing python3-venv using yum..."
+            if sudo yum install -y python3-venv; then
+                echo "✓ python3-venv installed successfully"
+            else
+                echo "❌ Failed to install python3-venv automatically"
+                echo "Please run manually: sudo yum install python3-venv"
+                exit 1
+            fi
+        elif command -v dnf &> /dev/null; then
+            # Modern Fedora systems
+            echo "📦 Installing python3-venv using dnf..."
+            if sudo dnf install -y python3-venv; then
+                echo "✓ python3-venv installed successfully"
+            else
+                echo "❌ Failed to install python3-venv automatically"
+                echo "Please run manually: sudo dnf install python3-venv"
+                exit 1
+            fi
+        else
+            echo "❌ Cannot automatically install python3-venv on this system"
+            echo "Please install it manually and run this script again"
+            exit 1
+        fi
     fi
     
     # Create virtual environment
