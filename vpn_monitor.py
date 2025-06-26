@@ -337,32 +337,24 @@ lcp-echo-failure 4
             ipsec_config = self._create_ipsec_config(server, config_dir)
             xl2tpd_config = self._create_xl2tpd_config(server, config_dir)
             
-            logger.debug(f"Starting IPSec for {server['name']}")
+            logger.debug(f"Restarting IPSec with new configuration for {server['name']}")
             
-            # Start strongSwan
-            ipsec_cmd = ['ipsec', 'start']
-            ipsec_result = subprocess.run(ipsec_cmd, capture_output=True, timeout=15)
+            # Restart strongSwan to load new configuration
+            ipsec_cmd = ['ipsec', 'restart']
+            ipsec_result = subprocess.run(ipsec_cmd, capture_output=True, timeout=20)
             
             if ipsec_result.returncode != 0:
                 connection_time = int((time.time() - start_time) * 1000)
                 error_msg = ipsec_result.stderr.decode() + " " + ipsec_result.stdout.decode()
-                return False, connection_time, f"IPSec start failed: {error_msg.strip()}"
+                return False, connection_time, f"IPSec restart failed: {error_msg.strip()}"
             
-            # Wait for strongSwan to initialize
-            time.sleep(3)
-            
-            # Reload configuration and bring up connection
-            logger.debug(f"Reloading IPSec configuration for {server['name']}")
-            reload_cmd = ['ipsec', 'reload']
-            reload_result = subprocess.run(reload_cmd, capture_output=True, timeout=10)
-            
-            if reload_result.returncode != 0:
-                logger.warning(f"IPSec reload warning: {reload_result.stderr.decode()}")
+            # Wait for strongSwan to fully restart and initialize
+            time.sleep(5)
             
             logger.debug(f"Bringing up IPSec connection for {server['name']}")
             
             up_cmd = ['ipsec', 'up', 'vpntest']
-            up_result = subprocess.run(up_cmd, capture_output=True, timeout=15)
+            up_result = subprocess.run(up_cmd, capture_output=True, timeout=20)
             
             if up_result.returncode != 0:
                 connection_time = int((time.time() - start_time) * 1000)
