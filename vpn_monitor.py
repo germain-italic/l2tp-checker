@@ -345,62 +345,140 @@ password {server['password']}
         try:
             logger.debug("Starting strongSwan service")
             
-            # Check if already running first
-            status_cmd = ['ipsec', 'status']
-            status_result = subprocess.run(status_cmd, capture_output=True, timeout=5)
-            logger.debug(f"Initial status check: {status_result.returncode}, stdout: {status_result.stdout.decode()}, stderr: {status_result.stderr.decode()}")
+            # Ensure clean state
+            self._ensure_clean_strongswan_state()
             
-            # If already running, stop it first
-            if status_result.returncode == 0:
-                logger.debug("strongSwan already running, stopping first")
-                stop_result = subprocess.run(['ipsec', 'stop'], capture_output=True, timeout=10)
-                logger.debug(f"Stop result: {stop_result.returncode}, stdout: {stop_result.stdout.decode()}, stderr: {stop_result.stderr.decode()}")
+            # Try direct charon startup first (more reliable in containers)
+            logger.debug("Attempting direct charon startup")
+            charon_cmd = [
+                'charon', 
+                '--use-syslog',
+                '--debug-ike', '1',
+                '--debug-knl', '1',
+                '--debug-cfg', '0'
+            ]
+            
+            try:
+                # Start charon in background
+                charon_process = subprocess.Popen(
+                    charon_cmd,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    preexec_fn=os.setsid  # Create new process group
+                )
+                
+                # Wait for charon to initialize
                 time.sleep(3)
-            
-            # Start strongSwan with detailed logging
-            start_cmd = ['ipsec', 'start', '--nofork']
-            start_result = subprocess.run(start_cmd, capture_output=True, timeout=15)
-            logger.debug(f"Start command result: {start_result.returncode}")
-            logger.debug(f"Start stdout: {start_result.stdout.decode()}")
-            logger.debug(f"Start stderr: {start_result.stderr.decode()}")
-            
-            if start_result.returncode != 0:
-                logger.error(f"ipsec start failed with return code {start_result.returncode}")
-                logger.error(f"Error output: {start_result.stderr.decode()}")
                 
-                # Try alternative startup method
-                logger.debug("Trying alternative startup method")
-                alt_start_cmd = ['ipsec', 'start']
-                alt_result = subprocess.run(alt_start_cmd, capture_output=True, timeout=15)
-                logger.debug(f"Alternative start result: {alt_result.returncode}, stdout: {alt_result.stdout.decode()}, stderr: {alt_result.stderr.decode()}")
-                
-                if alt_result.returncode != 0:
+                # Check if charon is running
+                if charon_process.poll() is None:
+                    logger.debug("Charon started successfully")
+                    
+                    # Wait a bit more for full initialization
+                    time.sleep(2)
+                    
+                    # Verify charon is responding
+                    if self._verify_charon_running():
+                        logger.debug("Charon is running and responding")
+                        return True
+                    else:
+                        logger.debug("Charon started but not responding properly")
+                        charon_process.terminate()
+                        return False
+                else:
+                    # Charon failed to start
+                    stdout, stderr = charon_process.communicate(timeout=5)
+                    logger.error(f"Charon failed to start: stdout={stdout.decode()}, stderr={stderr.decode()}")
                     return False
-            
-            # Wait for service to be ready
-            time.sleep(5)
-            
-            # Verify service is running
-            status_cmd = ['ipsec', 'status']
-            status_result = subprocess.run(status_cmd, capture_output=True, timeout=5)
-            logger.debug(f"Final status check: {status_result.returncode}, stdout: {status_result.stdout.decode()}, stderr: {status_result.stderr.decode()}")
-            
-            if status_result.returncode == 0:
-                logger.debug("strongSwan service started successfully")
-                return True
-            else:
-                logger.error(f"strongSwan service not responding: {status_result.stderr.decode()}")
+                    
+            except Exception as e:
+                logger.error(f"Failed to start charon directly: {e}")
                 
-                # Try to get more information about what's wrong
-                ps_result = subprocess.run(['ps', 'aux'], capture_output=True, timeout=5)
-                ps_output = ps_result.stdout.decode()
-                ipsec_processes = [line for line in ps_output.split('\n') if 'ipsec' in line or 'charon' in line]
-                logger.debug(f"Process list (filtered for ipsec/charon): {ipsec_processes}")
-                
-                return False
+                # Fallback to traditional ipsec start
+                logger.debug("Falling back to traditional ipsec start")
+                return self._fallback_ipsec_start()
                 
         except Exception as e:
             logger.error(f"Failed to start strongSwan service: {e}")
+            return False
+    
+    def _ensure_clean_strongswan_state(self):
+        """Ensure strongSwan is in a clean state before starting."""
+        try:
+            # Kill any existing processes
+            processes_to_kill = ['charon', 'starter', 'ipsec']
+            for process in processes_to_kill:
+                subprocess.run(['killall', '-9', process], capture_output=True, timeout=3)
+            
+            # Remove PID and control files
+            files_to_remove = [
+                '/var/run/charon.pid',
+                '/var/run/starter.charon.pid', 
+                '/var/run/starter.pid',
+                '/var/run/charon.ctl',
+                '/var/run/charon.vici'
+            ]
+            
+            for file_path in files_to_remove:
+                if os.path.exists(file_path):
+                    os.remove(file_path)
+                    logger.debug(f"Removed {file_path}")
+            
+            # Wait for cleanup
+            time.sleep(1)
+            
+        except Exception as e:
+            logger.debug(f"Cleanup warning: {e}")
+    
+    def _verify_charon_running(self) -> bool:
+        """Verify that charon daemon is running and responding."""
+        try:
+            # Check if charon process exists
+            pgrep_result = subprocess.run(['pgrep', 'charon'], capture_output=True, timeout=5)
+            if pgrep_result.returncode != 0:
+                logger.debug("Charon process not found")
+                return False
+            
+            # Try to get status via ipsec command
+            status_result = subprocess.run(['ipsec', 'status'], capture_output=True, timeout=5)
+            if status_result.returncode == 0:
+                logger.debug("Charon responding to status requests")
+                return True
+            else:
+                logger.debug(f"Charon not responding: {status_result.stderr.decode()}")
+                return False
+                
+        except Exception as e:
+            logger.debug(f"Charon verification failed: {e}")
+            return False
+    
+    def _fallback_ipsec_start(self) -> bool:
+        """Fallback method using traditional ipsec start."""
+        try:
+            logger.debug("Using fallback ipsec start method")
+            
+            # Try simple ipsec start (not --nofork to avoid hanging)
+            start_cmd = ['ipsec', 'start']
+            start_result = subprocess.run(start_cmd, capture_output=True, timeout=10)
+            logger.debug(f"ipsec start result: {start_result.returncode}, stdout: {start_result.stdout.decode()}, stderr: {start_result.stderr.decode()}")
+            
+            if start_result.returncode == 0:
+                # Wait for startup
+                time.sleep(5)
+                
+                # Verify it's running
+                if self._verify_charon_running():
+                    logger.debug("Fallback ipsec start successful")
+                    return True
+                else:
+                    logger.debug("Fallback ipsec start failed verification")
+                    return False
+            else:
+                logger.error(f"Fallback ipsec start failed: {start_result.stderr.decode()}")
+                return False
+                
+        except Exception as e:
+            logger.error(f"Fallback ipsec start exception: {e}")
             return False
 
     def _load_ipsec_config(self) -> bool:
@@ -408,59 +486,62 @@ password {server['password']}
         try:
             logger.debug("Loading IPSec configuration")
             
-            # Check if service is actually running first
-            status_cmd = ['ipsec', 'status']
-            status_result = subprocess.run(status_cmd, capture_output=True, timeout=5)
-            logger.debug(f"Pre-reload status: {status_result.returncode}, stdout: {status_result.stdout.decode()}, stderr: {status_result.stderr.decode()}")
-            
-            if status_result.returncode != 0:
-                logger.error("strongSwan service not running before reload attempt")
+            # Verify charon is running before attempting to load config
+            if not self._verify_charon_running():
+                logger.error("Charon not running, cannot load configuration")
                 return False
             
-            # First reload the configuration
+            # Use ipsec reload to load configuration
+            logger.debug("Reloading strongSwan configuration")
             reload_cmd = ['ipsec', 'reload']
-            reload_result = subprocess.run(reload_cmd, capture_output=True, timeout=10)
-            logger.debug(f"Reload result: {reload_result.returncode}, stdout: {reload_result.stdout.decode()}, stderr: {reload_result.stderr.decode()}")
+            reload_result = subprocess.run(reload_cmd, capture_output=True, timeout=8)
+            logger.debug(f"Reload command result: {reload_result.returncode}, stdout: {reload_result.stdout.decode()}, stderr: {reload_result.stderr.decode()}")
             
-            if reload_result.returncode != 0:
-                logger.error(f"ipsec reload failed: {reload_result.stderr.decode()}")
-                
-                # Try restarting instead of reloading
-                logger.debug("Reload failed, trying restart")
-                restart_result = subprocess.run(['ipsec', 'restart'], capture_output=True, timeout=15)
-                logger.debug(f"Restart result: {restart_result.returncode}, stdout: {restart_result.stdout.decode()}, stderr: {restart_result.stderr.decode()}")
-                
-                if restart_result.returncode != 0:
-                    return False
+            # Wait for configuration to be processed
+            time.sleep(3)
             
-            # Wait for reload to complete
-            time.sleep(5)
-            
-            # Verify configuration is loaded by checking status
-            status_cmd = ['ipsec', 'status']
-            status_result = subprocess.run(status_cmd, capture_output=True, timeout=5)
-            logger.debug(f"Post-reload status: {status_result.returncode}, stdout: {status_result.stdout.decode()}, stderr: {status_result.stderr.decode()}")
-            
-            if status_result.returncode == 0:
-                output = status_result.stdout.decode()
-                if 'vpntest' in output:
-                    logger.debug("Configuration loaded successfully")
-                    return True
-                else:
-                    logger.error(f"Configuration 'vpntest' not found in status output: {output}")
-                    
-                    # Try to get more detailed status
-                    statusall_cmd = ['ipsec', 'statusall']
-                    statusall_result = subprocess.run(statusall_cmd, capture_output=True, timeout=5)
-                    logger.debug(f"Detailed status: {statusall_result.stdout.decode()}")
-                    
-                    return False
-            else:
-                logger.error(f"Status check failed: {status_result.stderr.decode()}")
-                return False
+            # Verify configuration was loaded by checking if our connection is listed
+            return self._verify_config_loaded()
                     
         except Exception as e:
             logger.error(f"Failed to load IPSec configuration: {e}")
+            return False
+    
+    def _verify_config_loaded(self) -> bool:
+        """Verify that the VPN configuration was loaded successfully."""
+        try:
+            # Check if our connection 'vpntest' is loaded
+            status_cmd = ['ipsec', 'statusall']
+            status_result = subprocess.run(status_cmd, capture_output=True, timeout=5)
+            
+            if status_result.returncode == 0:
+                output = status_result.stdout.decode()
+                logger.debug(f"Configuration status output: {output}")
+                
+                # Look for our connection in the output
+                if 'vpntest:' in output or 'vpntest ' in output:
+                    logger.debug("Configuration 'vpntest' found in status")
+                    return True
+                else:
+                    logger.debug("Configuration 'vpntest' not found in status output")
+                    
+                    # Try alternative check - look for the connection in a different way
+                    listconns_cmd = ['ipsec', 'listconns']
+                    listconns_result = subprocess.run(listconns_cmd, capture_output=True, timeout=5)
+                    if listconns_result.returncode == 0:
+                        listconns_output = listconns_result.stdout.decode()
+                        logger.debug(f"List connections output: {listconns_output}")
+                        if 'vpntest' in listconns_output:
+                            logger.debug("Configuration found via listconns")
+                            return True
+                    
+                    return False
+            else:
+                logger.error(f"Status command failed: {status_result.stderr.decode()}")
+                return False
+                
+        except Exception as e:
+            logger.error(f"Configuration verification failed: {e}")
             return False
 
     def _test_vpn_connection(self, server: Dict[str, str]) -> Tuple[bool, Optional[int], Optional[str]]:
@@ -499,46 +580,36 @@ password {server['password']}
             # Load configuration
             if not self._load_ipsec_config():
                 connection_time = int((time.time() - start_time) * 1000)
-                return False, connection_time, "Failed to load IPSec configuration - check logs for details"
+                return False, connection_time, "Failed to load IPSec configuration"
             
-            # Wait for service to be ready
-            time.sleep(2)
+            # Wait for configuration to be fully loaded
+            time.sleep(3)
             
             logger.debug(f"Attempting to bring up IPSec connection for {server['name']}")
             
             # Bring up the connection
             up_cmd = ['ipsec', 'up', 'vpntest']
-            up_result = subprocess.run(up_cmd, capture_output=True, timeout=25)
+            up_result = subprocess.run(up_cmd, capture_output=True, timeout=20)
             up_output = up_result.stdout.decode() + " " + up_result.stderr.decode()
             
             logger.debug(f"IPSec up command output: {up_output}")
             
-            # Check if the up command succeeded
-            if up_result.returncode != 0:
-                connection_time = int((time.time() - start_time) * 1000)
-                return False, connection_time, f"IPSec up command failed: {up_output}"
-            
-            # Wait for IPSec to establish
-            time.sleep(5)
-            
-            # Give more time for connection establishment and check periodically
-            max_wait = 20
+            # Wait for connection establishment with periodic checks
+            max_wait = 15
             wait_time = 0
+            connection_established = False
+            
             while wait_time < max_wait:
                 if self._check_ipsec_status():
                     logger.debug(f"IPSec established after {wait_time} seconds")
+                    connection_established = True
                     break
-                time.sleep(1)
+                time.sleep(2)
                 wait_time += 1
             
-            # Verify IPSec is established before proceeding to L2TP
-            ipsec_status = self._check_ipsec_status()
-            if not ipsec_status:
+            if not connection_established:
                 connection_time = int((time.time() - start_time) * 1000)
-                status_cmd = ['ipsec', 'statusall']
-                status_result = subprocess.run(status_cmd, capture_output=True, timeout=5)
-                status_info = status_result.stdout.decode() if status_result.returncode == 0 else "No status available"
-                return False, connection_time, f"IPSec tunnel not established after {max_wait}s. Up output: {up_output}. Status: {status_info}"
+                return False, connection_time, f"IPSec tunnel not established after {max_wait} seconds. Command output: {up_output}"
             
             logger.debug(f"IPSec established, starting L2TP for {server['name']}")
             
