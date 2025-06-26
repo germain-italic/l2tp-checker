@@ -217,18 +217,21 @@ conn vpntest
     authby=psk
     auto=add
     ike=aes256-sha1-modp1024,aes128-sha1-modp1024,3des-sha1-modp1024!
-    esp=aes256-sha1,aes128-sha1,3des-sha1!
-    pfs=no
+    esp=aes256-sha1-modp1024,aes128-sha1-modp1024,3des-sha1-modp1024!
     rekey=no
     leftid=%any
-    rightid=%any
+    rightid={server['ip']}
+    aggressive=yes
+    ikelifetime=8h
+    keylife=1h
 """
         
         with open(config_file, 'w') as f:
             f.write(config_content)
         
         secrets_content = f"""# /etc/ipsec.secrets - strongSwan IPsec secrets file
-%any %any : PSK "{server['shared_key']}"
+{server['ip']} %any : PSK "{server['shared_key']}"
+%any {server['ip']} : PSK "{server['shared_key']}"
 """
         with open(secrets_file, 'w') as f:
             f.write(secrets_content)
@@ -351,6 +354,13 @@ lcp-echo-failure 4
             # Wait for strongSwan to fully restart and initialize
             time.sleep(5)
             
+            # Verify configuration was loaded
+            status_cmd = ['ipsec', 'status']
+            status_result = subprocess.run(status_cmd, capture_output=True, timeout=5)
+            if b'vpntest' not in status_result.stdout:
+                connection_time = int((time.time() - start_time) * 1000)
+                return False, connection_time, "VPN configuration not loaded properly"
+            
             logger.debug(f"Bringing up IPSec connection for {server['name']}")
             
             up_cmd = ['ipsec', 'up', 'vpntest']
@@ -369,6 +379,15 @@ lcp-echo-failure 4
             
             # Wait for IPSec to establish
             time.sleep(2)
+            
+            # Give more time for connection establishment
+            max_wait = 15
+            wait_time = 0
+            while wait_time < max_wait:
+                if self._check_ipsec_status():
+                    break
+                time.sleep(1)
+                wait_time += 1
             
             # Verify IPSec is established before proceeding to L2TP
             ipsec_status = self._check_ipsec_status()
@@ -445,8 +464,11 @@ lcp-echo-failure 4
             if status_result.returncode == 0:
                 output = status_result.stdout.decode()
                 # Look for established connections
-                if 'ESTABLISHED' in output or 'INSTALLED' in output:
+                if 'ESTABLISHED' in output and 'INSTALLED' in output:
                     return True
+                elif 'CONNECTING' in output:
+                    logger.debug("IPSec still connecting...")
+                    return False
             return False
         except Exception:
             return False
