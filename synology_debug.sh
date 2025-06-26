@@ -179,14 +179,14 @@ echo "Using username for peer ID: $USERNAME"
 # FIXED: Use %any for leftid to avoid @username format issue
 # Server logs show: "peer ID is ID_FQDN: '@germain'" - strongSwan adds @ to quoted strings
 # Solution: Use %any and let authentication happen via PSK secrets
+        # UPDATED: Match Windows 11 exactly - use Main Mode with AES-256
 cat > /etc/ipsec.conf << EOF
 config setup
     charondebug="ike 2, knl 1, cfg 1"
     strictcrlpolicy=no
     uniqueids=no
-    nat_traversal=yes
 
-conn synology
+conn windows11_match
     type=transport
     keyexchange=ikev1
     left=%defaultroute
@@ -195,18 +195,18 @@ conn synology
     rightprotoport=17/1701
     authby=psk
     auto=add
-    ike=3des-sha1-modp1024,aes256-sha1-modp1024,aes128-sha1-modp1024!
-    esp=3des-sha1,aes256-sha1,aes128-sha1!
+    ike=aes256-sha1-modp2048,aes256-sha1-modp1024,3des-sha1-modp1024!
+    esp=aes256-sha1,3des-sha1!
     rekey=no
     leftid=%any
     rightid=$SERVER_IP
-    aggressive=yes
+    aggressive=no
     ikelifetime=28800s
     keylife=3600s
     dpdaction=clear
     dpddelay=300s
     dpdtimeout=90s
-    forceencaps=no
+    forceencaps=yes
 EOF
 
 echo "✓ Created Synology-compatible IPSec configuration"

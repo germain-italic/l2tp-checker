@@ -227,14 +227,12 @@ class VPNMonitor:
         
         # IPSec configuration for Synology DSM7 - FIXED peer ID issue
         # Based on server logs showing "no suitable connection for peer '@germain'"
-        # Windows 11 uses username as peer ID, not IP address
-        # CRITICAL: Use %any for leftid to avoid @username format, authenticate via secrets
+        # UPDATED: Match Windows 11 exactly - Main Mode with AES-256-SHA1-MODP2048
         config_content = f"""
 config setup
     charondebug="ike 2, knl 1, cfg 1"
     strictcrlpolicy=no
     uniqueids=no
-    nat_traversal=yes
 
 conn vpntest
     type=transport
@@ -245,18 +243,18 @@ conn vpntest
     rightprotoport=17/1701
     authby=psk
     auto=add
-    ike=3des-sha1-modp1024,aes256-sha1-modp1024,aes128-sha1-modp1024!
-    esp=3des-sha1,aes256-sha1,aes128-sha1!
+    ike=aes256-sha1-modp2048,aes256-sha1-modp1024,3des-sha1-modp1024!
+    esp=aes256-sha1,3des-sha1!
     rekey=no
     leftid=%any
     rightid={server['ip']}
-    aggressive=yes
+    aggressive=no
     ikelifetime=28800s
     keylife=3600s
     dpdaction=clear
     dpddelay=300s
     dpdtimeout=90s
-    forceencaps=no
+    forceencaps=yes
 """
         
         with open(config_file, 'w') as f:
