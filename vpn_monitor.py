@@ -742,42 +742,11 @@ password {server['password']}
             # Check strongSwan status first
             ipsec_established = self._check_ipsec_status()
             if ipsec_established:
-                logger.debug("IPSec tunnel established")
+                logger.info("✅ IPSec tunnel ESTABLISHED successfully!")
+                return True
             else:
                 logger.debug("IPSec tunnel not established")
                 return False
-            
-            # For L2TP/IPSec, IPSec establishment is often sufficient
-            # But let's also check for L2TP indicators
-            
-            # Check for ppp interfaces
-            ip_result = subprocess.run(['ip', 'addr', 'show'], capture_output=True, timeout=5)
-            ip_output = ip_result.stdout.decode()
-            if b'ppp' in ip_result.stdout:
-                logger.debug("PPP interface found")
-                return True
-            
-            # Check for VPN routes
-            route_result = subprocess.run(['ip', 'route'], capture_output=True, timeout=5)
-            route_output = route_result.stdout.decode()
-            if b'ppp' in route_result.stdout:
-                logger.debug("PPP route found")
-                return True
-            
-            # Check for active pppd processes
-            pppd_check = subprocess.run(['pgrep', 'pppd'], capture_output=True, timeout=5)
-            if pppd_check.returncode == 0:
-                logger.debug("PPP daemon running")
-                return True
-            
-            # If IPSec is established, consider it a partial success
-            # Some L2TP/IPSec setups only establish IPSec tunnel
-            if ipsec_established:
-                logger.debug("IPSec established - considering as successful connection")
-                return True
-            
-            logger.debug(f"No VPN indicators found. IP interfaces: {ip_output[:200]}... Routes: {route_output[:200]}...")
-            return False
             
         except Exception as e:
             logger.debug(f"Connection verification failed: {e}")
