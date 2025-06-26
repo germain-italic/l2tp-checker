@@ -55,8 +55,6 @@ fi
 
 # Create virtual environment if needed
 if [ "$USE_VENV" = true ]; then
-    echo "🐍 Creating Python virtual environment..."
-    
     # Check if python3-venv is available
     if ! python3 -m venv --help &> /dev/null; then
         echo "❌ python3-venv is required but not available"
@@ -99,6 +97,8 @@ if [ "$USE_VENV" = true ]; then
             exit 1
         fi
     fi
+    
+    echo "🐍 Creating Python virtual environment..."
     
     # Create virtual environment
     python3 -m venv "$VENV_DIR"
