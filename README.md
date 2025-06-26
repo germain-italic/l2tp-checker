@@ -113,6 +113,18 @@ And two views for easy reporting:
 
 ## Docker Commands
 
+### Build Optimization
+```bash
+# Fast incremental builds (uses cache effectively)
+docker-compose build
+
+# Force complete rebuild (only when needed)
+docker-compose build --no-cache
+
+# Build with specific target (if using multi-stage)
+docker-compose build --target production
+```
+
 ### Basic Operations
 ```bash
 # Build and run
@@ -129,6 +141,9 @@ docker-compose down
 
 # Rebuild after changes
 docker-compose build --no-cache
+
+# Quick rebuild (uses cache)
+docker-compose build
 
 # Run one-time test
 docker-compose run --rm vpn-monitor
@@ -203,6 +218,14 @@ ORDER BY last_seen DESC;
 ```
 
 ## Troubleshooting
+
+### Build Performance
+
+**Slow builds:**
+- Use `docker-compose build` instead of `--no-cache` for incremental builds
+- Ensure `.dockerignore` is properly configured to exclude unnecessary files
+- Check Docker daemon has sufficient disk space and memory
+- Consider using Docker BuildKit: `DOCKER_BUILDKIT=1 docker-compose build`
 
 ### Common Issues
 
