@@ -1,3 +1,6 @@
+# Environment files
+.env
+
 # Python
 __pycache__/
 *.py[cod]
@@ -21,13 +24,16 @@ wheels/
 *.egg
 MANIFEST
 
-# Virtual environments
-venv/
-env/
-ENV/
+# Logs
+*.log
+logs/
+vpn_monitor.log
 
-# Environment variables
-.env
+# Temporary files
+tmp/
+temp/
+*.tmp
+*.temp
 
 # IDE
 .vscode/
@@ -39,13 +45,9 @@ ENV/
 .DS_Store
 Thumbs.db
 
-# Logs
-*.log
-logs/
-
 # Docker
 .dockerignore
 
-# Temporary files
-tmp/
-temp/
+# Database
+*.sql.backup
+*.db

@@ -1,23 +1,18 @@
 # VPN Monitor
 
-A containerized VPN monitoring system that performs actual L2TP/IPSec VPN tunnel testing and logs results to a MySQL database. Now available in both native cross-platform and Docker-based versions.
+A containerized VPN monitoring system that performs actual L2TP/IPSec VPN tunnel testing and logs results to a MySQL database.
 
-## Version Information
+## Features
 
-### v2.0.0 (Docker-based) - Full VPN Tunnel Testing
-- ✅ **Actual VPN tunnel establishment** using native Linux VPN clients (strongSwan + xl2tpd)
-- ✅ **Complete L2TP/IPSec handshake** with authentication
-- ✅ **Traffic routing verification** through established tunnels
-- ✅ **Containerized environment** for consistent testing across platforms
-- ✅ **Backward compatibility** with v1.x connectivity-only testing
+- 🔒 **Full VPN tunnel testing** with native Linux VPN clients (strongSwan + xl2tpd)
+- 🐳 **Containerized deployment** for consistent testing environments
+- 🔐 **Complete L2TP/IPSec authentication** with username/password/shared key
+- 🌐 **Network routing verification** through established VPN tunnels
+- 📊 **MySQL database logging** with comprehensive metrics
+- 🏥 **Container health monitoring** with built-in checks
+- 🔧 **Automatic VPN client configuration** and cleanup
 
-### v1.0.1 (Native) - Connectivity Testing Only
-- ✅ **Network connectivity** to VPN servers (ping test)
-- ✅ **L2TP port accessibility** (UDP port 1701 connectivity test)
-- ✅ **Cross-platform compatibility** (Linux, macOS, WSL2)
-- ✅ **Lightweight installation** without VPN client dependencies
-
-## Quick Start (Docker - Recommended)
+## Quick Start
 
 1. **Clone and configure:**
    ```bash
@@ -51,39 +46,12 @@ A containerized VPN monitoring system that performs actual L2TP/IPSec VPN tunnel
    */5 * * * * cd /path/to/l2tp-checker && docker-compose up --no-deps vpn-monitor
    ```
 
-## Quick Start (Native Installation)
-
-For lightweight connectivity testing without Docker:
-
-1. **Clone and setup:**
-   ```bash
-   git clone git@github.com:germain-italic/l2tp-checker.git
-   cd l2tp-checker
-   chmod +x setup.sh
-   ./setup.sh
-   ```
-
-2. **Configure and test:**
-   ```bash
-   # Edit .env with your configuration
-   nano .env
-   
-   # Test the monitor
-   ./run_monitor.sh
-   ```
-
 ## Configuration
 
 ### VPN Server Configuration
 
-The system supports two configuration formats:
+Configure your VPN servers in the `.env` file:
 
-**Connectivity Testing Only (v1.x compatible):**
-```bash
-VPN_SERVERS=server1:vpn1.example.com,server2:192.168.1.100
-```
-
-**Full Tunnel Testing (v2.0+ Docker):**
 ```bash
 VPN_SERVERS=server1:vpn1.example.com:username:password:shared_key,server2:vpn2.example.com:user2:pass2:key2
 ```
@@ -92,8 +60,7 @@ VPN_SERVERS=server1:vpn1.example.com:username:password:shared_key,server2:vpn2.e
 
 ```bash
 # VPN Server Configuration
-# Format for connectivity testing: server_name:server_ip
-# Format for full tunnel testing: server_name:server_ip:username:password:shared_key
+# Format: server_name:server_ip:username:password:shared_key
 VPN_SERVERS=server1:vpn1.example.com:myuser:mypass:sharedsecret
 
 # MySQL Database Configuration
@@ -124,47 +91,13 @@ MONITOR_ID=docker-monitor-01
 - Temporary VPN configurations cleaned up after each test
 - Network isolation through Docker networking
 
-## Compatibility Chart
+## Platform Support
 
-| Platform | Version | Docker Support | Native Support | VPN Testing Level |
-|----------|---------|----------------|----------------|-------------------|
-| **Docker** | Any with Docker 20.10+ | ✅ **Full Tunnel** | N/A | Complete L2TP/IPSec |
-| **Linux** | Ubuntu 20.04+ | ✅ **Full Tunnel** | ✅ **Connectivity** | Docker: Full / Native: Basic |
-| **Linux** | Debian 11+ | ✅ **Full Tunnel** | ✅ **Connectivity** | Docker: Full / Native: Basic |
-| **Linux** | CentOS/RHEL 8+ | ✅ **Full Tunnel** | ⚠️ **Connectivity** | Docker: Full / Native: Untested |
-| **macOS** | 13+ (Ventura+) | ✅ **Full Tunnel** | ✅ **Connectivity** | Docker: Full / Native: Basic |
-| **Windows** | WSL2 + Docker | ✅ **Full Tunnel** | ✅ **Connectivity** | Docker: Full / Native: Basic |
-| **Windows** | Docker Desktop | ✅ **Full Tunnel** | ❌ | Docker: Full |
-
-### Legend
-- ✅ **Full Tunnel**: Complete VPN tunnel establishment and testing
-- ✅ **Connectivity**: Basic server reachability and port testing
-- ⚠️ **Untested**: Should work but not verified
-- ❌ **Not Supported**: Known incompatibilities
-
-## Features
-
-### Docker Version (v2.0+)
-- 🔒 **Full VPN tunnel testing** with native Linux VPN clients
-- 🐳 **Containerized deployment** for consistent environments
-- 🔐 **Complete L2TP/IPSec authentication** testing
-- 🌐 **Network routing verification** through VPN tunnels
-- 📊 **Advanced connection metrics** and tunnel analysis
-- 🏥 **Container health monitoring** with built-in checks
-- 🔧 **Automatic VPN client configuration** and cleanup
-
-### Native Version (v1.x)
-- 🌍 **Cross-platform compatibility** (Linux, macOS, WSL2)
-- 🚀 **Lightweight installation** without complex dependencies
-- 📡 **Basic connectivity testing** without root privileges
-- 🐍 **Smart dependency management** with virtual environments
-
-### Common Features
-- 🔒 Secure credential storage via environment variables
-- 📊 MySQL database logging with comprehensive metrics
-- ⏰ Cron-compatible for scheduled monitoring
-- 📈 Built-in reporting views for monitoring dashboards
-- 🏥 Health monitoring with system information capture
+| Platform | Docker Support | VPN Testing Level |
+|----------|----------------|-------------------|
+| **Linux** | ✅ **Full Tunnel** | Complete L2TP/IPSec |
+| **macOS** | ✅ **Full Tunnel** | Complete L2TP/IPSec |
+| **Windows** | ✅ **Full Tunnel** | Complete L2TP/IPSec |
 
 ## Database Schema
 
@@ -177,8 +110,6 @@ And two views for easy reporting:
 
 - **vpn_monitoring_summary**: 24-hour success rate summary
 - **recent_failures**: Recent connection failures
-
-## Platform-Specific Notes
 
 ## Docker Commands
 
@@ -229,12 +160,6 @@ docker-compose exec vpn-monitor python3 vpn_monitor.py --health-check
 
 ### Docker Swarm/Kubernetes
 The container can be deployed in orchestration platforms with appropriate scheduling configurations.
-
-### Native Systemd (v1.x)
-```bash
-./install_service.sh
-sudo systemctl status vpn-monitor.timer
-```
 
 ## Monitoring Dashboard Queries
 
@@ -300,20 +225,12 @@ ORDER BY last_seen DESC;
    - Verify database connectivity from container
    - Ensure VPN tools are properly installed
 
-6. **Native Installation Issues (v1.x)**
-   - See previous troubleshooting section in README
-   - Consider using Docker version for full functionality
-
 ### Logs
 
 **Docker logs:**
 - Container logs: `docker-compose logs -f vpn-monitor`
 - Volume logs: `/var/log/vpn-monitor/` (mounted volume)
 - Health check logs: `docker-compose exec vpn-monitor python3 vpn_monitor.py --health-check`
-
-**Native logs (v1.x):**
-- Virtual environment: Check with `./run_monitor.sh`
-- Systemd service: `sudo journalctl -u vpn-monitor.service -f`
 
 ### Debugging
 
@@ -347,14 +264,13 @@ ORDER BY last_seen DESC;
 l2tp-checker/
 ├── Dockerfile             # Docker container definition
 ├── docker-compose.yml     # Docker Compose configuration
-├── vpn_monitor.py         # Main monitoring script (v2.0)
+├── vpn_monitor.py         # Main monitoring script
 ├── run_monitor.sh         # Execution wrapper
 ├── requirements.txt        # Python dependencies
 ├── .env.dist             # Environment template
 ├── .env                  # Your configuration
 ├── .dockerignore         # Docker ignore file
 ├── .gitignore            # Git ignore file
-├── setup.sh              # Native installation script (v1.x)
 ├── supabase/migrations/   # Database schema
 └── README.md              # This file
 ```
@@ -368,33 +284,6 @@ l2tp-checker/
 - Container isolation provides security boundaries
 - VPN configurations are temporary and cleaned up after tests
 - Use Docker secrets for production deployments
-
-## Migration from v1.x
-
-To upgrade from native installation to Docker:
-
-1. **Backup your configuration:**
-   ```bash
-   cp .env .env.backup
-   ```
-
-2. **Update VPN server format** (if using full tunnel testing):
-   ```bash
-   # Old format (v1.x): server_name:server_ip
-   # New format (v2.0): server_name:server_ip:username:password:shared_key
-   ```
-
-3. **Switch to Docker:**
-   ```bash
-   docker-compose up --build
-   ```
-
-4. **Update scheduling:**
-   ```bash
-   # Replace systemd service with Docker cron
-   sudo systemctl disable vpn-monitor.timer
-   # Add Docker cron job as shown above
-   ```
 
 ## Contributing
 

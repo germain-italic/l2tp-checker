@@ -12,7 +12,6 @@ import socket
 import platform
 import subprocess
 import getpass
-import json
 import tempfile
 import shutil
 import signal
@@ -76,7 +75,6 @@ class VPNMonitor:
         
         # VPN configuration directories
         self.temp_dir = tempfile.mkdtemp(prefix="vpn_test_")
-        self.cleanup_handlers = []
 
     def __del__(self):
         """Cleanup temporary files."""
@@ -104,22 +102,18 @@ class VPNMonitor:
         servers = []
         for server_config in servers_str.split(','):
             parts = server_config.strip().split(':')
-            if len(parts) < 2:
-                logger.warning(f"Invalid server config format: {server_config}")
+            if len(parts) != 5:
+                logger.error(f"Invalid server config format: {server_config}")
+                logger.error("Required format: server_name:server_ip:username:password:shared_key")
                 continue
             
             server = {
                 'name': parts[0],
-                'ip': parts[1]
+                'ip': parts[1],
+                'username': parts[2],
+                'password': parts[3],
+                'shared_key': parts[4]
             }
-            
-            # Support both old format (with credentials) and new format (IP only)
-            if len(parts) >= 5:
-                server.update({
-                    'username': parts[2],
-                    'password': parts[3],
-                    'shared_key': parts[4]
-                })
             
             servers.append(server)
         
@@ -223,12 +217,11 @@ conn vpntest
         with open(config_file, 'w') as f:
             f.write(config_content)
         
-        # Create secrets file if credentials are available
-        if 'shared_key' in server:
-            secrets_content = f"{server['ip']} : PSK \"{server['shared_key']}\"\n"
-            with open(secrets_file, 'w') as f:
-                f.write(secrets_content)
-            os.chmod(secrets_file, 0o600)
+        # Create secrets file
+        secrets_content = f"{server['ip']} : PSK \"{server['shared_key']}\"\n"
+        with open(secrets_file, 'w') as f:
+            f.write(secrets_content)
+        os.chmod(secrets_file, 0o600)
         
         return config_file
 
@@ -266,10 +259,6 @@ defaultroute
 usepeerdns
 debug
 connect-delay 5000
-"""
-        
-        if 'username' in server and 'password' in server:
-            options_content += f"""
 name {server['username']}
 password {server['password']}
 """
@@ -288,11 +277,6 @@ password {server['password']}
         
         try:
             logger.info(f"Testing VPN connection to {server['name']} ({server['ip']})")
-            
-            # If no credentials, fall back to connectivity test
-            if 'username' not in server or 'shared_key' not in server:
-                logger.info(f"No credentials provided for {server['name']}, performing connectivity test only")
-                return self._test_connectivity_only(server, start_time)
             
             # Create temporary configuration directory
             config_dir = os.path.join(self.temp_dir, f"vpn_{server['name']}_{int(time.time())}")
@@ -349,36 +333,6 @@ password {server['password']}
         finally:
             # Always cleanup
             self._stop_all_vpn_connections()
-
-    def _test_connectivity_only(self, server: Dict[str, str], start_time: float) -> Tuple[bool, Optional[int], Optional[str]]:
-        """Test basic connectivity when no credentials are provided."""
-        try:
-            # Test basic connectivity
-            if not self._test_basic_connectivity(server['ip']):
-                connection_time = int((time.time() - start_time) * 1000)
-                return False, connection_time, f"Cannot reach VPN server {server['ip']}"
-            
-            # Test L2TP port
-            try:
-                sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-                sock.settimeout(5)
-                result = sock.connect_ex((server['ip'], 1701))
-                sock.close()
-                
-                connection_time = int((time.time() - start_time) * 1000)
-                
-                if result == 0:
-                    return True, connection_time, "Connectivity test passed (no tunnel test)"
-                else:
-                    return False, connection_time, "L2TP port not accessible"
-                    
-            except Exception as e:
-                connection_time = int((time.time() - start_time) * 1000)
-                return False, connection_time, f"Port check failed: {e}"
-                
-        except Exception as e:
-            connection_time = int((time.time() - start_time) * 1000)
-            return False, connection_time, str(e)
 
     def _test_basic_connectivity(self, ip: str) -> bool:
         """Test basic network connectivity to IP."""
