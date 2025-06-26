@@ -12,13 +12,15 @@ echo "Monitor PID: $$"
 echo "Container hostname: $(hostname)"
 echo "Start time: $(date)"
 echo ""
-echo "IMPORTANT: While this monitor is running, debug scripts will conflict."
-echo "To run debug scripts, stop this container first:"
-echo "  docker-compose down"
-echo "  docker-compose run --rm vpn-monitor /app/synology_debug.sh"
+echo "Running single VPN test cycle..."
 echo ""
 
 cd "$(dirname "$0")"
 
 # Execute the VPN monitor directly with Python 3
-exec python3 vpn_monitor.py "$@"
+python3 vpn_monitor.py "$@"
+
+echo ""
+echo "=== VPN Monitor Completed ==="
+echo "End time: $(date)"
+echo "Check database for results"

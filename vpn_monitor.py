@@ -228,7 +228,7 @@ class VPNMonitor:
         # IPSec configuration for Synology DSM7 - FIXED peer ID issue
         # Based on server logs showing "no suitable connection for peer '@germain'"
         # UPDATED: Match Windows 11 exactly - Main Mode with AES-256-SHA1-MODP2048
-        # FINAL FIX: Optimize timing and L2TP integration
+        # FINAL FIX: Remove auto=start to prevent continuous loops
         config_content = f"""
 config setup
     charondebug="ike 2, knl 1, cfg 1"
@@ -257,7 +257,6 @@ conn vpntest
     margintime=9m
     rekeyfuzz=100%
     closeaction=none
-    auto=start
 """
         
         with open(config_file, 'w') as f:
@@ -608,18 +607,15 @@ password {server['password']}
             
             logger.debug(f"Attempting to bring up IPSec connection for {server['name']}")
             
-            # Connection should auto-start, just wait and check status
-            time.sleep(3)
-            
-            # Check if auto-started successfully
-            status_cmd = ['ipsec', 'statusall']
-            status_result = subprocess.run(status_cmd, capture_output=True, timeout=5)
-            up_output = status_result.stdout.decode()
+            # Manually bring up the connection (controlled, not auto)
+            up_cmd = ['ipsec', 'up', 'vpntest']
+            up_result = subprocess.run(up_cmd, capture_output=True, timeout=20)
+            up_output = up_result.stdout.decode() + " " + up_result.stderr.decode()
             
             logger.debug(f"IPSec status output: {up_output}")
             
             # Wait for connection establishment with more frequent checks
-            max_wait = 10
+            max_wait = 15
             wait_time = 0
             connection_established = False
             
@@ -628,8 +624,8 @@ password {server['password']}
                     logger.debug(f"IPSec established after {wait_time} seconds")
                     connection_established = True
                     break
-                time.sleep(0.5)
-                wait_time += 0.5
+                time.sleep(1)
+                wait_time += 1
             
             if not connection_established:
                 connection_time = int((time.time() - start_time) * 1000)
@@ -642,7 +638,7 @@ password {server['password']}
                 # Check for specific error patterns
                 error_details = self._analyze_ipsec_error(up_output, status_info)
                 
-                return False, connection_time, f"IPSec tunnel not established after {max_wait}s. {error_details}"
+                return False, connection_time, f"IPSec tunnel not established after {max_wait}s. Error: {error_details}"
             
             logger.debug(f"IPSec established, starting L2TP for {server['name']}")
             
@@ -650,14 +646,14 @@ password {server['password']}
             xl2tpd_cmd = ['xl2tpd', '-c', '/etc/xl2tpd/xl2tpd.conf', '-C', '/var/run/xl2tpd/l2tp-control']
             xl2tpd_process = subprocess.Popen(xl2tpd_cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
             
-            # Wait for xl2tpd to start properly (reduced timing)
-            time.sleep(2)
+            # Wait for xl2tpd to start properly
+            time.sleep(3)
             
             # Attempt L2TP connection
             try:
                 # Check if control file exists
                 if not os.path.exists('/var/run/xl2tpd/l2tp-control'):
-                    time.sleep(1)  # Wait a bit more
+                    time.sleep(2)  # Wait a bit more
                 
                 if os.path.exists('/var/run/xl2tpd/l2tp-control'):
                     # Send connect command via echo to control socket
@@ -668,7 +664,7 @@ password {server['password']}
                     logger.debug("L2TP control file not found")
                 
                 # Wait for connection establishment
-                time.sleep(5)
+                time.sleep(8)
                 
             except Exception as e:
                 logger.debug(f"L2TP connection attempt failed: {e}")
@@ -877,6 +873,10 @@ password {server['password']}
                 logger.warning(f"✗ {server['name']}: Failed - {error_message}")
         
         logger.info("VPN monitoring run completed")
+        
+        # Exit after one test run to prevent continuous loops
+        logger.info("Monitor run completed. Exiting to prevent continuous execution.")
+        sys.exit(0)
 
 
 def signal_handler(signum, frame):
