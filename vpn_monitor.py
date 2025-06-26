@@ -227,7 +227,7 @@ conn vpntest
         with open(config_file, 'w') as f:
             f.write(config_content)
         
-        # Create secrets file
+        secrets_content = f"""# /etc/ipsec.secrets - strongSwan IPsec secrets file
 %any %any : PSK "{server['shared_key']}"
 """
         with open(secrets_file, 'w') as f:
