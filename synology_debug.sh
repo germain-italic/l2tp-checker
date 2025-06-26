@@ -1,9 +1,49 @@
 #!/bin/bash
 # Synology DSM7 L2TP/IPSec Debug Script
 # Specifically designed for Synology NAS VPN servers
+#
+# IMPORTANT: This script requires exclusive access to VPN resources.
+# Stop any running VPN monitor before executing:
+#   docker-compose down
+#   docker-compose run --rm vpn-monitor /app/synology_debug.sh
 
 # Don't exit on errors - we want to continue debugging even if some steps fail
 set +e
+
+echo "=== VPN Resource Conflict Check ==="
+# Check if strongSwan is already running from another process
+if pgrep -f "charon\|starter" >/dev/null 2>&1; then
+    echo "⚠️  WARNING: strongSwan processes already running!"
+    echo "   This indicates the VPN monitor is likely still active."
+    echo "   For reliable debugging, stop the monitor first:"
+    echo ""
+    echo "   CORRECT USAGE:"
+    echo "   docker-compose down"
+    echo "   docker-compose run --rm vpn-monitor /app/synology_debug.sh"
+    echo ""
+    echo "   Attempting to clean up existing processes..."
+    
+    # Show what processes are running
+    echo "   Current VPN processes:"
+    ps aux | grep -E "(charon|starter|ipsec)" | grep -v grep || echo "   No VPN processes visible"
+    
+    # Force cleanup
+    killall -9 charon starter ipsec 2>/dev/null || true
+    sleep 3
+    
+    # Verify cleanup
+    if pgrep -f "charon\|starter" >/dev/null 2>&1; then
+        echo "   ❌ Failed to clean up VPN processes - debug may be unreliable"
+        echo "   Please stop the container and try again:"
+        echo "   docker-compose down && docker-compose run --rm vpn-monitor /app/synology_debug.sh"
+    else
+        echo "   ✓ VPN processes cleaned up successfully"
+    fi
+else
+    echo "✓ No conflicting VPN processes detected"
+fi
+
+echo ""
 
 echo "=== Synology DSM7 VPN Debug Script Started at $(date) ==="
 echo ""

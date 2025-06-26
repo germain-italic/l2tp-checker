@@ -151,30 +151,51 @@ docker-compose run --rm vpn-monitor
 
 ### Debugging
 ```bash
-# Start container first (required for exec commands)
-docker-compose up -d
+# IMPORTANT: Stop the monitor first to avoid VPN resource conflicts
+docker-compose down
+
+# Run debug script in a fresh container
+docker-compose run --rm vpn-monitor /app/vpn_debug.sh
+
+# Or run Synology-specific debug
+docker-compose run --rm vpn-monitor /app/synology_debug.sh
+
+# Or run server connectivity test
+docker-compose run --rm vpn-monitor /app/test_server.sh nas1.italic.fr
 
 # Access container shell
-docker-compose exec vpn-monitor bash
+docker-compose run --rm vpn-monitor bash
 
-# Run comprehensive debug script
-docker-compose exec vpn-monitor /app/vpn_debug.sh
+# After debugging, restart the monitor
+docker-compose up -d
 
 # Check VPN tools
-docker-compose exec vpn-monitor ipsec --version
-docker-compose exec vpn-monitor xl2tpd --version
+docker-compose run --rm vpn-monitor ipsec --version
+docker-compose run --rm vpn-monitor xl2tpd --version
 
 # Manual test run
-docker-compose exec vpn-monitor python3 vpn_monitor.py
+docker-compose run --rm vpn-monitor python3 vpn_monitor.py
 
 # Health check
-docker-compose exec vpn-monitor python3 vpn_monitor.py --health-check
+docker-compose run --rm vpn-monitor python3 vpn_monitor.py --health-check
 
 # View real-time logs
 docker-compose logs -f vpn-monitor
 
 # View recent logs (last 50 lines)
 docker-compose logs --tail=50 vpn-monitor
+```
+
+**CRITICAL:** Debug scripts require exclusive access to VPN resources. Always stop the running monitor before debugging:
+
+```bash
+# Wrong way (will fail due to resource conflicts):
+docker-compose up -d
+docker-compose exec vpn-monitor /app/synology_debug.sh  # ❌ FAILS
+
+# Correct way (clean isolation):
+docker-compose down
+docker-compose run --rm vpn-monitor /app/synology_debug.sh  # ✅ WORKS
 ```
 
 ## Scheduling and Automation

@@ -1,8 +1,35 @@
 #!/bin/bash
 # Comprehensive VPN Debug Script for L2TP/IPSec testing
 # This script performs manual testing and debugging of VPN connections
+#
+# IMPORTANT: This script requires exclusive access to VPN resources.
+# Stop any running VPN monitor before executing:
+#   docker-compose down
+#   docker-compose run --rm vpn-monitor /app/vpn_debug.sh
 
 set -e
+
+echo "=== VPN Resource Conflict Check ==="
+# Check if strongSwan is already running from another process
+if pgrep -f "charon\|starter" >/dev/null 2>&1; then
+    echo "⚠️  WARNING: strongSwan processes already running!"
+    echo "   This may indicate the VPN monitor is still active."
+    echo "   For best results, stop the monitor first:"
+    echo "   docker-compose down"
+    echo "   docker-compose run --rm vpn-monitor /app/vpn_debug.sh"
+    echo ""
+    echo "   Attempting to clean up existing processes..."
+    killall -9 charon starter 2>/dev/null || true
+    sleep 2
+fi
+
+# Check if configuration files are locked
+if [ -f /etc/ipsec.conf ] && ! [ -w /etc/ipsec.conf ]; then
+    echo "⚠️  WARNING: IPSec configuration files may be locked by another process"
+fi
+
+echo "✓ VPN resource check completed"
+echo ""
 
 echo "=== VPN Debug Script Started at $(date) ==="
 echo ""

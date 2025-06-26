@@ -1,6 +1,9 @@
 #!/bin/bash
 # Simple server connectivity test script
 # Tests various aspects of VPN server connectivity
+#
+# This script only tests network connectivity and doesn't require VPN resources.
+# It can be run alongside the VPN monitor without conflicts.
 
 set -e
 
