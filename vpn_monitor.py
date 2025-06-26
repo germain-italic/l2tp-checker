@@ -181,20 +181,24 @@ class VPNMonitor:
     def _stop_all_vpn_connections(self):
         """Stop all VPN connections."""
         try:
-            # Stop strongSwan connections
-            subprocess.run(['ipsec', 'down', 'vpntest'], capture_output=True, timeout=10)
+            # Stop strongSwan connections and service
+            subprocess.run(['ipsec', 'down', 'vpntest'], capture_output=True, timeout=5)
             subprocess.run(['ipsec', 'stop'], capture_output=True, timeout=10)
             
-            # Stop xl2tpd
+            # Stop xl2tpd processes
             subprocess.run(['killall', 'xl2tpd'], capture_output=True, timeout=5)
+            
+            # Clean up any ppp interfaces
+            subprocess.run(['killall', 'pppd'], capture_output=True, timeout=5)
             
         except Exception as e:
             logger.debug(f"VPN cleanup: {e}")
 
     def _create_ipsec_config(self, server: Dict[str, str], config_dir: str) -> str:
         """Create IPSec configuration for strongSwan."""
-        config_file = os.path.join(config_dir, 'ipsec.conf')
-        secrets_file = os.path.join(config_dir, 'ipsec.secrets')
+        # Use system directories that strongSwan expects
+        config_file = '/etc/ipsec.conf'
+        secrets_file = '/etc/ipsec.secrets'
         
         # Basic IPSec configuration for L2TP/IPSec
         config_content = f"""
@@ -227,7 +231,10 @@ conn vpntest
 
     def _create_xl2tpd_config(self, server: Dict[str, str], config_dir: str) -> str:
         """Create xl2tpd configuration."""
-        config_file = os.path.join(config_dir, 'xl2tpd.conf')
+        config_file = '/etc/xl2tpd/xl2tpd.conf'
+        
+        # Ensure directory exists
+        os.makedirs('/etc/xl2tpd', exist_ok=True)
         
         config_content = f"""
 [global]
@@ -244,7 +251,11 @@ length bit = yes
             f.write(config_content)
         
         # Create PPP options file
-        options_file = os.path.join(config_dir, 'options.l2tpd')
+        options_file = '/etc/ppp/options.l2tpd'
+        
+        # Ensure directory exists
+        os.makedirs('/etc/ppp', exist_ok=True)
+        
         options_content = f"""
 ipcp-accept-local
 ipcp-accept-remote
@@ -287,32 +298,53 @@ password {server['password']}
                 connection_time = int((time.time() - start_time) * 1000)
                 return False, connection_time, f"Cannot reach VPN server {server['ip']}"
             
+            # Stop any existing VPN connections first
+            self._stop_all_vpn_connections()
+            
             # Create VPN configurations
             ipsec_config = self._create_ipsec_config(server, config_dir)
             xl2tpd_config = self._create_xl2tpd_config(server, config_dir)
             
-            # Start strongSwan with custom config
-            ipsec_cmd = ['ipsec', 'start', '--config', ipsec_config]
+            # Start strongSwan
+            ipsec_cmd = ['ipsec', 'start']
             ipsec_result = subprocess.run(ipsec_cmd, capture_output=True, timeout=15)
             
             if ipsec_result.returncode != 0:
                 connection_time = int((time.time() - start_time) * 1000)
                 return False, connection_time, f"IPSec start failed: {ipsec_result.stderr.decode()}"
             
-            # Load connection
-            load_cmd = ['ipsec', 'up', 'vpntest']
-            load_result = subprocess.run(load_cmd, capture_output=True, timeout=15)
-            
-            # Start xl2tpd
-            xl2tpd_cmd = ['xl2tpd', '-c', xl2tpd_config, '-C', '/tmp/xl2tpd-control']
-            xl2tpd_process = subprocess.Popen(xl2tpd_cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-            
-            # Wait a moment for services to start
+            # Wait for strongSwan to initialize
             time.sleep(2)
             
-            # Attempt L2TP connection
-            l2tp_cmd = ['echo', 'c vpntest']
-            l2tp_result = subprocess.run(l2tp_cmd, capture_output=True, timeout=10)
+            # Reload configuration and bring up connection
+            reload_cmd = ['ipsec', 'reload']
+            subprocess.run(reload_cmd, capture_output=True, timeout=10)
+            
+            up_cmd = ['ipsec', 'up', 'vpntest']
+            up_result = subprocess.run(up_cmd, capture_output=True, timeout=15)
+            
+            if up_result.returncode != 0:
+                connection_time = int((time.time() - start_time) * 1000)
+                return False, connection_time, f"IPSec connection failed: {up_result.stderr.decode()}"
+            
+            # Start xl2tpd
+            xl2tpd_cmd = ['xl2tpd', '-D']  # Run in foreground for better control
+            xl2tpd_process = subprocess.Popen(xl2tpd_cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+            
+            # Wait for xl2tpd to start
+            time.sleep(3)
+            
+            # Attempt L2TP connection via xl2tpd control
+            try:
+                # Send connect command to xl2tpd
+                control_cmd = ['xl2tpd-control', 'connect', 'vpntest']
+                control_result = subprocess.run(control_cmd, capture_output=True, timeout=10)
+                
+                # Wait for connection establishment
+                time.sleep(5)
+                
+            except Exception as e:
+                logger.debug(f"xl2tpd control command failed: {e}")
             
             # Check if connection was established
             connection_time = int((time.time() - start_time) * 1000)
@@ -321,7 +353,12 @@ password {server['password']}
             if self._verify_vpn_connection():
                 return True, connection_time, None
             else:
-                return False, connection_time, "VPN tunnel establishment failed"
+                # Get more detailed error information
+                status_cmd = ['ipsec', 'status']
+                status_result = subprocess.run(status_cmd, capture_output=True, timeout=5)
+                status_info = status_result.stdout.decode() if status_result.returncode == 0 else "No status available"
+                
+                return False, connection_time, f"VPN tunnel establishment failed. IPSec status: {status_info}"
                 
         except subprocess.TimeoutExpired:
             connection_time = int((time.time() - start_time) * 1000)
@@ -346,19 +383,33 @@ password {server['password']}
     def _verify_vpn_connection(self) -> bool:
         """Verify that VPN connection is actually established."""
         try:
+            # Check strongSwan status first
+            status_cmd = ['ipsec', 'status']
+            status_result = subprocess.run(status_cmd, capture_output=True, timeout=5)
+            if status_result.returncode == 0 and b'ESTABLISHED' in status_result.stdout:
+                logger.debug("IPSec tunnel established")
+            
             # Check for ppp interfaces
             ip_result = subprocess.run(['ip', 'addr', 'show'], capture_output=True, timeout=5)
             if b'ppp' in ip_result.stdout:
+                logger.debug("PPP interface found")
                 return True
             
             # Check for VPN routes
             route_result = subprocess.run(['ip', 'route'], capture_output=True, timeout=5)
             if b'ppp' in route_result.stdout:
+                logger.debug("PPP route found")
                 return True
+            
+            # Check if we have any L2TP connections
+            netstat_result = subprocess.run(['netstat', '-an'], capture_output=True, timeout=5)
+            if netstat_result.returncode == 0 and b':1701' in netstat_result.stdout:
+                logger.debug("L2TP connection detected")
                 
             return False
             
-        except Exception:
+        except Exception as e:
+            logger.debug(f"Connection verification failed: {e}")
             return False
 
     def _log_result(self, server: Dict[str, str], success: bool, connection_time: Optional[int], error_message: Optional[str]):
