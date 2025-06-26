@@ -199,7 +199,7 @@ conn windows11_match
     esp=aes256-sha1,3des-sha1!
     rekey=no
     leftid=%any
-    rightid=$SERVER_IP
+    rightid=%any
     aggressive=no
     ikelifetime=480m
     keylife=60m
@@ -451,7 +451,7 @@ conn windows11_exact
     esp=aes256-sha1!
     rekey=no
     leftid=%any
-    rightid=$SERVER_IP
+    rightid=%any
     aggressive=no
     ikelifetime=480m
     keylife=60m
@@ -493,7 +493,7 @@ conn synology_legacy
     esp=aes256-sha1!
     rekey=no
     leftid=%any
-    rightid=$SERVER_IP
+    rightid=%any
     aggressive=no
     ikelifetime=8h
     keylife=60m

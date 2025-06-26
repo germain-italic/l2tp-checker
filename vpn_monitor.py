@@ -247,7 +247,7 @@ conn vpntest
     esp=aes256-sha1,3des-sha1!
     rekey=no
     leftid=%any
-    rightid={server['ip']}
+    rightid=%any
     aggressive=no
     ikelifetime=8h
     keylife=1h
