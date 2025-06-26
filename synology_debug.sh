@@ -389,14 +389,15 @@ echo ""
 echo "=== Testing Alternative Synology Configurations ==="
 echo ""
 
-echo "1. Testing with even weaker encryption (for older Synology):"
+echo "1. Testing EXACT Windows 11 parameters (DES-MD5-MODP768):"
 cat > /etc/ipsec.conf << EOF
 config setup
     charondebug="ike 2, knl 1, cfg 1"
     strictcrlpolicy=no
     uniqueids=no
+    nat_traversal=yes
 
-conn synology_weak
+conn windows11_exact
     type=transport
     keyexchange=ikev1
     left=%defaultroute
@@ -405,57 +406,63 @@ conn synology_weak
     rightprotoport=17/1701
     authby=psk
     auto=add
-    ike=3des-md5-modp768,3des-sha1-modp768!
-    esp=3des-md5,3des-sha1!
+    ike=des-md5-modp768,3des-md5-modp768,des-sha1-modp768!
+    esp=des-md5,3des-md5,des-sha1!
+    rekey=no
+    leftid=
+    rightid=$SERVER_IP
+    aggressive=yes
+    ikelifetime=480m
+    keylife=60m
+    dpdaction=none
+    margintime=9m
+    rekeyfuzz=100%
+    forceencaps=no
+EOF
+
+ipsec reload
+sleep 2
+echo "Attempting Windows 11 exact match connection..."
+timeout 20 ipsec up windows11_exact 2>&1 | tee /tmp/windows11_exact.log
+
+if grep -qi "ESTABLISHED" /tmp/windows11_exact.log; then
+    echo "🎉 SUCCESS with Windows 11 exact parameters!"
+else
+    echo "❌ Windows 11 exact match failed"
+fi
+
+echo ""
+echo "2. Testing Synology legacy mode (DES-MD5 only):"
+cat > /etc/ipsec.conf << EOF
+config setup
+    charondebug="ike 2, knl 1, cfg 1"
+    strictcrlpolicy=no
+    uniqueids=no
+    nat_traversal=yes
+
+conn synology_legacy
+    type=transport
+    keyexchange=ikev1
+    left=%defaultroute
+    leftprotoport=17/1701
+    right=$SERVER_IP
+    rightprotoport=17/1701
+    authby=psk
+    auto=add
+    ike=des-md5-modp768!
+    esp=des-md5!
     rekey=no
     leftid=%any
     rightid=$SERVER_IP
     aggressive=yes
-    ikelifetime=86400s
-    keylife=28800s
-    dpdaction=clear
-    dpddelay=300s
+    ikelifetime=480m
+    keylife=60m
+    dpdaction=none
     forceencaps=no
 EOF
 
 ipsec reload
 sleep 2
-echo "Trying weakest encryption (3DES-MD5)..."
-
-echo ""
-echo "2. Testing without aggressive mode:"
-cat > /etc/ipsec.conf << EOF
-config setup
-    charondebug="ike 2, knl 1, cfg 1"
-    strictcrlpolicy=no
-    uniqueids=no
-
-conn synology_main
-    type=transport
-    keyexchange=ikev1
-    left=%defaultroute
-    leftprotoport=17/1701
-    right=$SERVER_IP
-    rightprotoport=17/1701
-    authby=psk
-    auto=add
-    ike=3des-sha1-modp1024,aes256-sha1-modp1024!
-    esp=3des-sha1,aes256-sha1!
-    rekey=no
-    leftid=%any
-    rightid=$SERVER_IP
-    aggressive=no
-    ikelifetime=28800s
-    keylife=3600s
-    dpdaction=clear
-    dpddelay=300s
-    forceencaps=no
-EOF
-
-ipsec reload
-sleep 2
-echo "Trying main mode (non-aggressive)..."
-timeout 15 ipsec up synology_main 2>&1 | head -10
 
 echo ""
 echo "=== Cleanup ==="
