@@ -137,14 +137,6 @@ docker-compose run --rm vpn-monitor
 ### Debugging
 ```bash
 # Access container shell
-docker-compose exec vpn-monitor bash
-
-# Check VPN tools
-docker-compose exec vpn-monitor ipsec --version
-docker-compose exec vpn-monitor xl2tpd --version
-
-# Manual test run
-docker-compose exec vpn-monitor python3 vpn_monitor.py
 
 # Health check
 docker-compose exec vpn-monitor python3 vpn_monitor.py --health-check
