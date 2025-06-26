@@ -34,8 +34,8 @@ USE_VENV=false
 if command -v pip3 &> /dev/null; then
     echo "✓ pip3 found"
     
-    # Test if we can install packages globally
-    if pip3 install --dry-run --quiet requests 2>/dev/null; then
+    # Test if we can install packages globally by checking for externally managed environment
+    if pip3 list &> /dev/null && ! pip3 install --dry-run --quiet --no-deps requests 2>&1 | grep -q "externally-managed-environment"; then
         echo "✓ Can install packages globally"
     else
         echo "⚠️  Externally managed Python environment detected"
@@ -55,24 +55,30 @@ fi
 
 # Create virtual environment if needed
 if [ "$USE_VENV" = true ]; then
-    # Check if python3-venv is available
-    if ! python3 -m venv --help &> /dev/null; then
-        echo "❌ python3-venv is required but not available"
+    echo "🐍 Setting up Python virtual environment..."
+    
+    # First, check if python3-venv is available by trying to create a test venv
+    if ! python3 -m venv --help &> /dev/null 2>&1; then
+        echo "❌ python3-venv module is not available"
         echo "🔧 Attempting to install python3-venv..."
+        
+        # Detect Python version for package name
+        PYTHON_VERSION=$(python3 -c "import sys; print(f'{sys.version_info.major}.{sys.version_info.minor}')")
+        VENV_PACKAGE="python${PYTHON_VERSION}-venv"
         
         # Try to install python3-venv automatically
         if command -v apt &> /dev/null; then
             # Debian/Ubuntu systems
-            echo "📦 Installing python3-venv using apt..."
-            if sudo apt update && sudo apt install -y python3-venv; then
-                echo "✓ python3-venv installed successfully"
+            echo "📦 Installing $VENV_PACKAGE using apt..."
+            if sudo apt update && sudo apt install -y "$VENV_PACKAGE"; then
+                echo "✓ $VENV_PACKAGE installed successfully"
             else
-                echo "❌ Failed to install python3-venv automatically"
-                echo "Please run manually: sudo apt install python3-venv"
+                echo "❌ Failed to install $VENV_PACKAGE automatically"
+                echo "Please run manually: sudo apt install $VENV_PACKAGE"
                 exit 1
             fi
         elif command -v yum &> /dev/null; then
-            # RHEL/CentOS/Fedora systems
+            # RHEL/CentOS systems
             echo "📦 Installing python3-venv using yum..."
             if sudo yum install -y python3-venv; then
                 echo "✓ python3-venv installed successfully"
@@ -94,21 +100,36 @@ if [ "$USE_VENV" = true ]; then
         else
             echo "❌ Cannot automatically install python3-venv on this system"
             echo "Please install it manually and run this script again"
+            echo "For Debian/Ubuntu: sudo apt install $VENV_PACKAGE"
             exit 1
         fi
     fi
     
+    # Now try to create the virtual environment
     echo "🐍 Creating Python virtual environment..."
     
+    # Remove existing venv if it exists and is broken
+    if [ -d "$VENV_DIR" ]; then
+        echo "🗑️  Removing existing virtual environment..."
+        rm -rf "$VENV_DIR"
+    fi
+    
     # Create virtual environment
-    python3 -m venv "$VENV_DIR"
-    echo "✓ Virtual environment created in $VENV_DIR/"
+    if python3 -m venv "$VENV_DIR"; then
+        echo "✓ Virtual environment created in $VENV_DIR/"
+    else
+        echo "❌ Failed to create virtual environment"
+        echo "This might be due to missing python3-venv package"
+        echo "Please install it manually and try again"
+        exit 1
+    fi
     
     # Activate virtual environment
     source "$VENV_DIR/bin/activate"
     echo "✓ Virtual environment activated"
     
     # Upgrade pip in virtual environment
+    echo "📦 Upgrading pip in virtual environment..."
     pip install --upgrade pip
 fi
 
