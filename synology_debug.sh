@@ -176,8 +176,9 @@ else:
 echo "Using username for peer ID: $USERNAME"
 
 # Create configuration that EXACTLY matches Windows 11 L2TP/IPSec client
-# FIXED: Use quoted username as leftid (peer ID) to prevent @username format
-# Server logs show: "peer ID is ID_FQDN: '@germain'" - we need plain "germain"
+# FIXED: Use %any for leftid to avoid @username format issue
+# Server logs show: "peer ID is ID_FQDN: '@germain'" - strongSwan adds @ to quoted strings
+# Solution: Use %any and let authentication happen via PSK secrets
 cat > /etc/ipsec.conf << EOF
 config setup
     charondebug="ike 2, knl 1, cfg 1"
@@ -197,7 +198,7 @@ conn synology
     ike=3des-sha1-modp1024,aes256-sha1-modp1024,aes128-sha1-modp1024!
     esp=3des-sha1,aes256-sha1,aes128-sha1!
     rekey=no
-    leftid="$USERNAME"
+    leftid=%any
     rightid=$SERVER_IP
     aggressive=yes
     ikelifetime=28800s
@@ -209,7 +210,7 @@ conn synology
 EOF
 
 echo "✓ Created Synology-compatible IPSec configuration"
-echo "   - Using leftid=\"$USERNAME\" (prevents @username format)"
+echo "   - Using leftid=%any (prevents @username format)"
 echo "   - Using 3DES/SHA1 encryption (Synology compatible)"
 echo ""
 
@@ -227,10 +228,9 @@ if servers and servers[0]:
         username = parts[2]
         shared_key = parts[4]
         secrets_content = f'''# strongSwan IPsec secrets file for Synology
-# FIXED: Added username-based peer ID authentication
-\"{username}\" {server_ip} : PSK \"{shared_key}\"
-{server_ip} %any : PSK \"{shared_key}\"
+# FIXED: Use %any to avoid peer ID format issues
 %any {server_ip} : PSK \"{shared_key}\"
+{server_ip} %any : PSK \"{shared_key}\"
 '''
         with open('/etc/ipsec.secrets', 'w') as f:
             f.write(secrets_content)
