@@ -15,7 +15,7 @@ A cross-platform VPN monitoring system that tests L2TP/IPSec VPN connections and
 
 1. **Clone and setup:**
    ```bash
-   git clone <repository-url>
+   git clone git@github.com:germain-italic/l2tp-checker.git
    cd vpn-monitor
    chmod +x setup.sh
    ./setup.sh
