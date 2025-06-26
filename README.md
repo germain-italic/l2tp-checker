@@ -2,6 +2,32 @@
 
 A cross-platform VPN monitoring system that tests L2TP/IPSec VPN connections and logs results to a MySQL database. Compatible with Debian native, macOS, and Debian WSL2.
 
+## Compatibility Chart
+
+| Operating System | Version | Status | Installation Method | Notes |
+|------------------|---------|--------|-------------------|-------|
+| **Linux Lite** | 7.4 (Ubuntu 24.04 LTS) | ✅ **Tested** | Virtual Environment | Automatic dependency resolution |
+| **Ubuntu** | 24.04 LTS (Noble) | ✅ **Supported** | Virtual Environment | Modern externally-managed Python |
+| **Ubuntu** | 22.04 LTS (Jammy) | ✅ **Supported** | Virtual Environment | Standard installation |
+| **Ubuntu** | 20.04 LTS (Focal) | ✅ **Supported** | Global/Virtual Environment | Legacy Python support |
+| **Debian** | 12 (Bookworm) | ✅ **Supported** | Virtual Environment | Modern Debian |
+| **Debian** | 11 (Bullseye) | ✅ **Supported** | Virtual Environment | Standard installation |
+| **Debian WSL2** | Any | ✅ **Supported** | Virtual Environment | Windows Subsystem for Linux |
+| **macOS** | 13+ (Ventura+) | ✅ **Supported** | Homebrew/System | Requires Xcode CLI tools |
+| **macOS** | 12 (Monterey) | ⚠️ **Likely** | Homebrew/System | May need manual setup |
+| **CentOS/RHEL** | 8+ | ⚠️ **Untested** | DNF/YUM | Should work with dnf |
+| **Fedora** | 35+ | ⚠️ **Untested** | DNF | Should work with dnf |
+| **Arch Linux** | Rolling | ⚠️ **Untested** | Manual | Requires manual package installation |
+
+### Legend
+- ✅ **Tested**: Confirmed working by users
+- ✅ **Supported**: Should work based on system compatibility
+- ⚠️ **Likely**: Expected to work but not tested
+- ⚠️ **Untested**: Not tested, may require manual configuration
+- ❌ **Not Supported**: Known incompatibilities
+
+*Help us expand this chart! Test on your system and report results.*
+
 ## Features
 
 - 🌍 Cross-platform compatibility (Linux, macOS, WSL2)
@@ -10,6 +36,9 @@ A cross-platform VPN monitoring system that tests L2TP/IPSec VPN connections and
 - ⏰ Cron-compatible for scheduled monitoring
 - 🏥 Health monitoring with system information capture
 - 📈 Built-in reporting views for monitoring dashboards
+- 🐍 Smart dependency management with virtual environments
+- 🔧 Automatic system package installation
+- 📝 Easy wrapper scripts for execution
 
 ## Quick Start
 
@@ -23,34 +52,59 @@ A cross-platform VPN monitoring system that tests L2TP/IPSec VPN connections and
 
 2. **Configure environment:**
    ```bash
-   cp .env.dist .env
+   cp .env.dist .env  # (Done automatically by setup.sh)
    # Edit .env with your VPN servers and database credentials
    nano .env
    ```
 
 3. **Setup database:**
    ```bash
-   mysql -u your_username -p your_database < database.sql
+   mysql -u your_username -p your_database < supabase/migrations/20250626084019_yellow_canyon.sql
    ```
 
 4. **Test the monitor:**
    ```bash
-   # If using virtual environment (modern systems):
+   # Modern systems (virtual environment):
    ./run_monitor.sh
    
-   # Or if installed globally:
+   # Legacy systems (global installation):
    python3 vpn_monitor.py
    ```
 
-5. **Add to crontab for every 5 minutes:**
+5. **Setup automatic monitoring:**
+   
+   **Option A - Systemd Service (Recommended):**
+   ```bash
+   ./install_service.sh
+   # Check status: sudo systemctl status vpn-monitor.timer
+   # View logs: sudo journalctl -u vpn-monitor.service -f
+   ```
+   
+   **Option B - Crontab (Traditional):**
    ```bash
    crontab -e
    # Add this line (adjust path as needed):
-   # For virtual environment:
-   */5 * * * * cd /path/to/l2tp-checker && ./run_monitor.sh >/dev/null 2>&1
-   # For global installation:
-   */5 * * * * cd /path/to/l2tp-checker && python3 vpn_monitor.py >/dev/null 2>&1
+   */5 * * * * cd /home/user/l2tp-checker && ./run_monitor.sh >/dev/null 2>&1
    ```
+
+## Installation Methods
+
+The setup script automatically detects your system and chooses the best installation method:
+
+### Virtual Environment (Recommended)
+- **Used on**: Modern Debian/Ubuntu (24.04+), systems with externally-managed Python
+- **Benefits**: Isolated dependencies, no system conflicts
+- **Execution**: Use `./run_monitor.sh`
+
+### Global Installation
+- **Used on**: Older systems, systems without pip restrictions
+- **Benefits**: Simple, direct execution
+- **Execution**: Use `python3 vpn_monitor.py`
+
+### User Installation
+- **Used on**: Systems without sudo access, fallback method
+- **Benefits**: No root required
+- **Execution**: Use `./run_monitor.sh` or ensure `~/.local/bin` is in PATH
 
 ## Configuration
 
@@ -97,20 +151,28 @@ And two views for easy reporting:
 ## Platform-Specific Notes
 
 ### Linux (Debian/Ubuntu)
-- Requires `ping` command (usually pre-installed)
-- Works with both native and WSL2 installations
+- **Modern systems (24.04+)**: Uses virtual environment automatically
+- **Legacy systems**: May use global installation
+- **WSL2**: Fully supported with virtual environment
+- **Dependencies**: Automatically installs `python3-venv`, `python3-pip`
 
 ### macOS
 - Uses built-in networking tools
-- May require Xcode command line tools
+- May require Xcode command line tools: `xcode-select --install`
+- Homebrew recommended for package management
 
 ### Dependencies
 
+**Core Requirements:**
 - Python 3.6+
-- python3-venv (for modern Debian/Ubuntu systems)
+- python3-venv (automatically installed on Linux)
+- python3-pip (automatically installed on Linux)
+
+**Python Packages (automatically installed):**
 - PyMySQL
 - python-dotenv
 - requests
+- cryptography
 
 ## Monitoring Dashboard Queries
 
@@ -146,29 +208,80 @@ ORDER BY last_seen DESC;
 ### Common Issues
 
 1. **Externally Managed Environment Error**
-   - This is normal on modern Debian/Ubuntu systems
-   - The setup script will automatically create a virtual environment
+   ```
+   error: externally-managed-environment
+   ```
+   - **Solution**: This is normal on modern Debian/Ubuntu systems
+   - The setup script automatically creates a virtual environment
    - Use `./run_monitor.sh` instead of `python3 vpn_monitor.py`
 
-1. **Database Connection Failed**
+2. **Virtual Environment Creation Failed**
+   ```
+   The virtual environment was not created successfully because ensurepip is not available
+   ```
+   - **Solution**: Run `sudo apt install python3-venv python3-pip`
+   - Or let the setup script handle it automatically
+
+3. **Database Connection Failed**
    - Verify database credentials in .env
    - Ensure MySQL server is accessible
    - Check firewall settings
 
-2. **VPN Tests Always Fail**
+4. **VPN Tests Always Fail**
    - Verify VPN server addresses are correct
    - Check network connectivity
    - Ensure VPN servers are running
 
-3. **Permission Denied Errors**
-   - Make sure the script is executable: `chmod +x vpn_monitor.py`
-   - Check log file permissions in /tmp/
+5. **Permission Denied Errors**
+   - Make sure scripts are executable: `chmod +x *.sh`
+   - Check log file permissions
+
+6. **Missing Dependencies**
+   - Re-run setup script: `./setup.sh`
+   - For manual installation: `pip install -r requirements.txt`
 
 ### Logs
 
 Monitor logs are written to:
-- `/tmp/vpn_monitor.log` (or `~/vpn-monitor-logs/` if /tmp is not writable)
-- Standard output when run manually
+- **Virtual environment**: Check with `./run_monitor.sh`
+- **Global installation**: `/tmp/vpn_monitor.log`
+- **Systemd service**: `sudo journalctl -u vpn-monitor.service -f`
+- **User logs**: `~/vpn-monitor-logs/` (if /tmp is not writable)
+
+### Debugging
+
+1. **Test installation:**
+   ```bash
+   ./run_monitor.sh --help
+   ```
+
+2. **Check virtual environment:**
+   ```bash
+   source venv/bin/activate  # If using venv
+   python --version
+   pip list
+   ```
+
+3. **Verify database connection:**
+   ```bash
+   mysql -h your-host -u your-user -p your-database
+   ```
+
+## File Structure
+
+```
+l2tp-checker/
+├── vpn_monitor.py          # Main monitoring script
+├── setup.sh               # Automated setup script
+├── run_monitor.sh          # Execution wrapper (created by setup)
+├── install_service.sh      # Systemd service installer (created by setup)
+├── requirements.txt        # Python dependencies
+├── .env.dist              # Environment template
+├── .env                   # Your configuration (created by setup)
+├── venv/                  # Virtual environment (created by setup)
+├── supabase/migrations/   # Database schema
+└── README.md              # This file
+```
 
 ## Security Considerations
 
@@ -176,6 +289,16 @@ Monitor logs are written to:
 - Limit database user permissions to only required tables
 - Consider using SSL/TLS for database connections
 - Regularly rotate VPN and database passwords
+- Virtual environment isolates dependencies from system
+
+## Contributing
+
+Help us improve compatibility! If you test on a new system:
+
+1. Note your OS and version
+2. Run `./setup.sh` and document any issues
+3. Test `./run_monitor.sh`
+4. Report results by updating the compatibility chart
 
 ## License
 
