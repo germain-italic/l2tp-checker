@@ -157,8 +157,27 @@ echo ""
 
 echo "=== Creating Synology-Compatible IPSec Configuration ==="
 
+# Get username from environment for peer ID
+USERNAME=$(python3 -c "
+import os
+from dotenv import load_dotenv
+load_dotenv('/app/.env')
+servers = os.getenv('VPN_SERVERS', '').split(',')
+if servers and servers[0]:
+    parts = servers[0].strip().split(':')
+    if len(parts) >= 3:
+        print(parts[2])  # username
+    else:
+        print('testuser')
+else:
+    print('testuser')
+")
+
+echo "Using username for peer ID: $USERNAME"
+
 # Create configuration that EXACTLY matches Windows 11 L2TP/IPSec client
-# This configuration replicates the exact IKE parameters Windows 11 sends
+# FIXED: Use username as leftid (peer ID) instead of %any
+# This fixes the "no suitable connection for peer" error
 cat > /etc/ipsec.conf << EOF
 config setup
     charondebug="ike 2, knl 1, cfg 1"
@@ -178,7 +197,7 @@ conn synology
     ike=3des-sha1-modp1024,aes256-sha1-modp1024,aes128-sha1-modp1024!
     esp=3des-sha1,aes256-sha1,aes128-sha1!
     rekey=no
-    leftid=%any
+    leftid=$USERNAME
     rightid=$SERVER_IP
     aggressive=yes
     ikelifetime=28800s
@@ -189,6 +208,9 @@ conn synology
     forceencaps=no
 EOF
 
+echo "✓ Created Synology-compatible IPSec configuration"
+echo "   - Using leftid=$USERNAME (fixes peer ID mismatch)"
+echo "   - Using 3DES/SHA1 encryption (Synology compatible)"
 echo ""
 
 echo "=== Creating IPSec Secrets ==="
@@ -202,14 +224,17 @@ if servers and servers[0]:
     parts = servers[0].strip().split(':')
     if len(parts) >= 5:
         server_ip = parts[1]
+        username = parts[2]
         shared_key = parts[4]
         secrets_content = f'''# strongSwan IPsec secrets file for Synology
+# FIXED: Added username-based peer ID authentication
+{username} {server_ip} : PSK \"{shared_key}\"
 {server_ip} %any : PSK \"{shared_key}\"
 %any {server_ip} : PSK \"{shared_key}\"
 '''
         with open('/etc/ipsec.secrets', 'w') as f:
             f.write(secrets_content)
-        print(f'✓ Created secrets file for {server_ip}')
+        print(f'✓ Created secrets file for {server_ip} with username {username}')
         print(f'✓ Shared key length: {len(shared_key)} characters')
     else:
         print('✗ Invalid server configuration format')
@@ -390,6 +415,23 @@ echo "=== Testing Alternative Synology Configurations ==="
 echo ""
 
 echo "1. Testing EXACT Windows 11 parameters (DES-MD5-MODP768):"
+
+# Get username again for this test
+USERNAME=$(python3 -c "
+import os
+from dotenv import load_dotenv
+load_dotenv('/app/.env')
+servers = os.getenv('VPN_SERVERS', '').split(',')
+if servers and servers[0]:
+    parts = servers[0].strip().split(':')
+    if len(parts) >= 3:
+        print(parts[2])
+    else:
+        print('testuser')
+else:
+    print('testuser')
+")
+
 cat > /etc/ipsec.conf << EOF
 config setup
     charondebug="ike 2, knl 1, cfg 1"
@@ -409,7 +451,7 @@ conn windows11_exact
     ike=des-md5-modp768,3des-md5-modp768,des-sha1-modp768!
     esp=des-md5,3des-md5,des-sha1!
     rekey=no
-    leftid=
+    leftid=$USERNAME
     rightid=$SERVER_IP
     aggressive=yes
     ikelifetime=480m
@@ -452,7 +494,7 @@ conn synology_legacy
     ike=des-md5-modp768!
     esp=des-md5!
     rekey=no
-    leftid=%any
+    leftid=$USERNAME
     rightid=$SERVER_IP
     aggressive=yes
     ikelifetime=480m
@@ -463,6 +505,14 @@ EOF
 
 ipsec reload
 sleep 2
+echo "Attempting Synology legacy connection..."
+timeout 20 ipsec up synology_legacy 2>&1 | tee /tmp/synology_legacy.log
+
+if grep -qi "ESTABLISHED" /tmp/synology_legacy.log; then
+    echo "🎉 SUCCESS with Synology legacy mode!"
+else
+    echo "❌ Synology legacy mode failed"
+fi
 
 echo ""
 echo "=== Cleanup ==="

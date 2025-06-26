@@ -225,9 +225,9 @@ class VPNMonitor:
         config_file = '/etc/ipsec.conf'
         secrets_file = '/etc/ipsec.secrets'
         
-        # IPSec configuration optimized for Synology DSM7 without SHA2-256 mode
-        # Uses legacy encryption for maximum compatibility with Windows/macOS
-        # EXACTLY matches Windows 11 L2TP/IPSec client parameters
+        # IPSec configuration for Synology DSM7 - FIXED peer ID issue
+        # Based on server logs showing "no suitable connection for peer '172.25.137.90'"
+        # Windows 11 uses username as peer ID, not IP address
         config_content = f"""
 config setup
     charondebug="ike 2, knl 1, cfg 1"
@@ -247,7 +247,7 @@ conn vpntest
     ike=3des-sha1-modp1024,aes256-sha1-modp1024,aes128-sha1-modp1024!
     esp=3des-sha1,aes256-sha1,aes128-sha1!
     rekey=no
-    leftid=%any
+    leftid={server['username']}
     rightid={server['ip']}
     aggressive=yes
     ikelifetime=28800s
@@ -261,21 +261,25 @@ conn vpntest
         with open(config_file, 'w') as f:
             f.write(config_content)
         
-        # Create secrets file with proper format
+        # Create secrets file with proper format - FIXED peer ID
+        # Must match the leftid in the connection configuration
         secrets_content = f"""# strongSwan IPsec secrets file
+# Fixed peer ID to match Windows 11 behavior
+{server['username']} {server['ip']} : PSK "{server['shared_key']}"
 {server['ip']} %any : PSK "{server['shared_key']}"
 %any {server['ip']} : PSK "{server['shared_key']}"
 
 # Debug: Server details
 # Server: {server['name']}
 # IP: {server['ip']}
+# Username: {server['username']}
 # Shared key length: {len(server['shared_key'])} characters
 """
         with open(secrets_file, 'w') as f:
             f.write(secrets_content)
         os.chmod(secrets_file, 0o600)
         
-        logger.debug(f"Created IPSec secrets file with key for {server['ip']}")
+        logger.debug(f"Created IPSec config with leftid={server['username']} for {server['ip']}")
         
         return config_file
 
