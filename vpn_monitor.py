@@ -38,7 +38,7 @@ if not os.path.exists(log_dir):
     os.makedirs(log_dir, exist_ok=True)
 
 logging.basicConfig(
-    level=logging.INFO,
+    level=logging.DEBUG,
     format='%(asctime)s - %(levelname)s - %(message)s',
     handlers=[
         logging.FileHandler(f'{log_dir}/vpn_monitor.log'),
@@ -184,13 +184,17 @@ class VPNMonitor:
             logger.debug("Stopping all VPN connections and services")
             
             # Stop strongSwan connections first (ignore errors)
-            subprocess.run(['ipsec', 'down', 'vpntest'], capture_output=True, timeout=5)
-            subprocess.run(['ipsec', 'stop'], capture_output=True, timeout=10)
+            down_result = subprocess.run(['ipsec', 'down', 'vpntest'], capture_output=True, timeout=5)
+            logger.debug(f"ipsec down result: {down_result.returncode}, stdout: {down_result.stdout.decode()}, stderr: {down_result.stderr.decode()}")
+            
+            stop_result = subprocess.run(['ipsec', 'stop'], capture_output=True, timeout=10)
+            logger.debug(f"ipsec stop result: {stop_result.returncode}, stdout: {stop_result.stdout.decode()}, stderr: {stop_result.stderr.decode()}")
             
             # Kill all VPN-related processes forcefully
             processes_to_kill = ['xl2tpd', 'pppd', 'charon', 'starter']
             for process in processes_to_kill:
-                subprocess.run(['killall', '-9', process], capture_output=True, timeout=3)
+                kill_result = subprocess.run(['killall', '-9', process], capture_output=True, timeout=3)
+                logger.debug(f"killall {process} result: {kill_result.returncode}")
             
             # Clean up all control and PID files
             files_to_remove = [
@@ -199,11 +203,14 @@ class VPNMonitor:
                 '/var/run/starter.charon.pid',
                 '/var/run/starter.pid',
                 '/var/run/charon.ctl',
-                '/var/run/charon.vici'
+                '/var/run/charon.vici',
+                '/var/run/starter.charon.pid'
             ]
             
             for file_path in files_to_remove:
-                subprocess.run(['rm', '-f', file_path], capture_output=True)
+                if os.path.exists(file_path):
+                    os.remove(file_path)
+                    logger.debug(f"Removed {file_path}")
             
             # Wait for complete cleanup
             time.sleep(2)
@@ -338,30 +345,61 @@ password {server['password']}
         try:
             logger.debug("Starting strongSwan service")
             
-            # Use ipsec start which properly initializes everything
-            start_cmd = ['ipsec', 'start']
+            # Check if already running first
+            status_cmd = ['ipsec', 'status']
+            status_result = subprocess.run(status_cmd, capture_output=True, timeout=5)
+            logger.debug(f"Initial status check: {status_result.returncode}, stdout: {status_result.stdout.decode()}, stderr: {status_result.stderr.decode()}")
+            
+            # If already running, stop it first
+            if status_result.returncode == 0:
+                logger.debug("strongSwan already running, stopping first")
+                stop_result = subprocess.run(['ipsec', 'stop'], capture_output=True, timeout=10)
+                logger.debug(f"Stop result: {stop_result.returncode}, stdout: {stop_result.stdout.decode()}, stderr: {stop_result.stderr.decode()}")
+                time.sleep(3)
+            
+            # Start strongSwan with detailed logging
+            start_cmd = ['ipsec', 'start', '--nofork']
             start_result = subprocess.run(start_cmd, capture_output=True, timeout=15)
+            logger.debug(f"Start command result: {start_result.returncode}")
+            logger.debug(f"Start stdout: {start_result.stdout.decode()}")
+            logger.debug(f"Start stderr: {start_result.stderr.decode()}")
             
             if start_result.returncode != 0:
-                logger.debug(f"ipsec start failed: {start_result.stderr.decode()}")
-                return False
+                logger.error(f"ipsec start failed with return code {start_result.returncode}")
+                logger.error(f"Error output: {start_result.stderr.decode()}")
+                
+                # Try alternative startup method
+                logger.debug("Trying alternative startup method")
+                alt_start_cmd = ['ipsec', 'start']
+                alt_result = subprocess.run(alt_start_cmd, capture_output=True, timeout=15)
+                logger.debug(f"Alternative start result: {alt_result.returncode}, stdout: {alt_result.stdout.decode()}, stderr: {alt_result.stderr.decode()}")
+                
+                if alt_result.returncode != 0:
+                    return False
             
             # Wait for service to be ready
-            time.sleep(3)
+            time.sleep(5)
             
             # Verify service is running
             status_cmd = ['ipsec', 'status']
             status_result = subprocess.run(status_cmd, capture_output=True, timeout=5)
+            logger.debug(f"Final status check: {status_result.returncode}, stdout: {status_result.stdout.decode()}, stderr: {status_result.stderr.decode()}")
             
             if status_result.returncode == 0:
                 logger.debug("strongSwan service started successfully")
                 return True
             else:
-                logger.debug(f"strongSwan service not responding: {status_result.stderr.decode()}")
+                logger.error(f"strongSwan service not responding: {status_result.stderr.decode()}")
+                
+                # Try to get more information about what's wrong
+                ps_result = subprocess.run(['ps', 'aux'], capture_output=True, timeout=5)
+                ps_output = ps_result.stdout.decode()
+                logger.debug(f"Process list (filtered for ipsec/charon): {[line for line in ps_output.split('\\n') if 'ipsec' in line or 'charon' in line]}")
+                
                 return False
                 
         except Exception as e:
-            logger.debug(f"Failed to start strongSwan service: {e}")
+            logger.error(f"Failed to start strongSwan service: {e}")
             return False
 
     def _load_ipsec_config(self) -> bool:
@@ -369,20 +407,38 @@ password {server['password']}
         try:
             logger.debug("Loading IPSec configuration")
             
+            # Check if service is actually running first
+            status_cmd = ['ipsec', 'status']
+            status_result = subprocess.run(status_cmd, capture_output=True, timeout=5)
+            logger.debug(f"Pre-reload status: {status_result.returncode}, stdout: {status_result.stdout.decode()}, stderr: {status_result.stderr.decode()}")
+            
+            if status_result.returncode != 0:
+                logger.error("strongSwan service not running before reload attempt")
+                return False
+            
             # First reload the configuration
             reload_cmd = ['ipsec', 'reload']
             reload_result = subprocess.run(reload_cmd, capture_output=True, timeout=10)
+            logger.debug(f"Reload result: {reload_result.returncode}, stdout: {reload_result.stdout.decode()}, stderr: {reload_result.stderr.decode()}")
             
             if reload_result.returncode != 0:
-                logger.debug(f"ipsec reload failed: {reload_result.stderr.decode()}")
-                return False
+                logger.error(f"ipsec reload failed: {reload_result.stderr.decode()}")
+                
+                # Try restarting instead of reloading
+                logger.debug("Reload failed, trying restart")
+                restart_result = subprocess.run(['ipsec', 'restart'], capture_output=True, timeout=15)
+                logger.debug(f"Restart result: {restart_result.returncode}, stdout: {restart_result.stdout.decode()}, stderr: {restart_result.stderr.decode()}")
+                
+                if restart_result.returncode != 0:
+                    return False
             
             # Wait for reload to complete
-            time.sleep(2)
+            time.sleep(5)
             
             # Verify configuration is loaded by checking status
             status_cmd = ['ipsec', 'status']
             status_result = subprocess.run(status_cmd, capture_output=True, timeout=5)
+            logger.debug(f"Post-reload status: {status_result.returncode}, stdout: {status_result.stdout.decode()}, stderr: {status_result.stderr.decode()}")
             
             if status_result.returncode == 0:
                 output = status_result.stdout.decode()
@@ -390,14 +446,20 @@ password {server['password']}
                     logger.debug("Configuration loaded successfully")
                     return True
                 else:
-                    logger.debug(f"Configuration not found in status: {output}")
+                    logger.error(f"Configuration 'vpntest' not found in status output: {output}")
+                    
+                    # Try to get more detailed status
+                    statusall_cmd = ['ipsec', 'statusall']
+                    statusall_result = subprocess.run(statusall_cmd, capture_output=True, timeout=5)
+                    logger.debug(f"Detailed status: {statusall_result.stdout.decode()}")
+                    
                     return False
             else:
-                logger.debug(f"Status check failed: {status_result.stderr.decode()}")
+                logger.error(f"Status check failed: {status_result.stderr.decode()}")
                 return False
                     
         except Exception as e:
-            logger.debug(f"Failed to load IPSec configuration: {e}")
+            logger.error(f"Failed to load IPSec configuration: {e}")
             return False
 
     def _test_vpn_connection(self, server: Dict[str, str]) -> Tuple[bool, Optional[int], Optional[str]]:
@@ -431,12 +493,12 @@ password {server['password']}
             # Start strongSwan service
             if not self._start_strongswan_daemon():
                 connection_time = int((time.time() - start_time) * 1000)
-                return False, connection_time, "Failed to start strongSwan service"
+                return False, connection_time, "Failed to start strongSwan daemon"
             
             # Load configuration
             if not self._load_ipsec_config():
                 connection_time = int((time.time() - start_time) * 1000)
-                return False, connection_time, "Failed to load IPSec configuration"
+                return False, connection_time, "Failed to load IPSec configuration - check logs for details"
             
             # Wait for service to be ready
             time.sleep(2)

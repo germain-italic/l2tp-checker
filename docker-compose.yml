@@ -24,6 +24,7 @@ services:
     # Environment variables (can be overridden by .env file)
     environment:
       - PYTHONUNBUFFERED=1
+      - DEBIAN_FRONTEND=noninteractive
     
     # Health check
     healthcheck:
