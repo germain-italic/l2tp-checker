@@ -57,14 +57,15 @@ fi
 if [ "$USE_VENV" = true ]; then
     echo "🐍 Setting up Python virtual environment..."
     
-    # First, check if python3-venv is available by trying to create a test venv
-    if ! python3 -m venv --help &> /dev/null 2>&1; then
+    # Detect Python version for package name
+    PYTHON_VERSION=$(python3 -c "import sys; print(f'{sys.version_info.major}.{sys.version_info.minor}')")
+    VENV_PACKAGE="python${PYTHON_VERSION}-venv"
+    
+    # Check if python3-venv is available by actually trying to import venv
+    echo "🔍 Checking if venv module is available..."
+    if ! python3 -c "import venv" 2>/dev/null; then
         echo "❌ python3-venv module is not available"
-        echo "🔧 Attempting to install python3-venv..."
-        
-        # Detect Python version for package name
-        PYTHON_VERSION=$(python3 -c "import sys; print(f'{sys.version_info.major}.{sys.version_info.minor}')")
-        VENV_PACKAGE="python${PYTHON_VERSION}-venv"
+        echo "🔧 Attempting to install $VENV_PACKAGE..."
         
         # Try to install python3-venv automatically
         if command -v apt &> /dev/null; then
@@ -72,6 +73,13 @@ if [ "$USE_VENV" = true ]; then
             echo "📦 Installing $VENV_PACKAGE using apt..."
             if sudo apt update && sudo apt install -y "$VENV_PACKAGE"; then
                 echo "✓ $VENV_PACKAGE installed successfully"
+                
+                # Verify installation worked
+                if ! python3 -c "import venv" 2>/dev/null; then
+                    echo "❌ Installation verification failed - venv module still not available"
+                    echo "Please try installing manually: sudo apt install $VENV_PACKAGE"
+                    exit 1
+                fi
             else
                 echo "❌ Failed to install $VENV_PACKAGE automatically"
                 echo "Please run manually: sudo apt install $VENV_PACKAGE"
@@ -103,6 +111,8 @@ if [ "$USE_VENV" = true ]; then
             echo "For Debian/Ubuntu: sudo apt install $VENV_PACKAGE"
             exit 1
         fi
+    else
+        echo "✓ venv module is available"
     fi
     
     # Now try to create the virtual environment
@@ -119,8 +129,8 @@ if [ "$USE_VENV" = true ]; then
         echo "✓ Virtual environment created in $VENV_DIR/"
     else
         echo "❌ Failed to create virtual environment"
-        echo "This might be due to missing python3-venv package"
-        echo "Please install it manually and try again"
+        echo "Even after installing python3-venv, creation failed"
+        echo "Please check your Python installation and try again"
         exit 1
     fi
     
