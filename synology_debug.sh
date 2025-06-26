@@ -2,7 +2,8 @@
 # Synology DSM7 L2TP/IPSec Debug Script
 # Specifically designed for Synology NAS VPN servers
 
-set -e
+# Don't exit on errors - we want to continue debugging even if some steps fail
+set +e
 
 echo "=== Synology DSM7 VPN Debug Script Started at $(date) ==="
 echo ""
@@ -38,8 +39,38 @@ echo "Network namespace: $(readlink /proc/self/ns/net 2>/dev/null || echo 'Canno
 # Check if TUN/TAP is available
 if [ -c /dev/net/tun ]; then
     echo "✓ TUN/TAP device: Available"
+    ls -la /dev/net/tun
 else
     echo "❌ TUN/TAP device: Not available (may affect VPN functionality)"
+    echo "Checking /dev/net/ directory:"
+    ls -la /dev/net/ 2>/dev/null || echo "/dev/net/ directory not found"
+fi
+
+# Check if we can create network interfaces
+echo "Testing network interface creation capability:"
+if ip link add test-dummy type dummy 2>/dev/null; then
+    echo "✓ Can create network interfaces"
+    ip link delete test-dummy 2>/dev/null || true
+else
+    echo "❌ Cannot create network interfaces (may need NET_ADMIN capability)"
+fi
+
+# Check available capabilities in detail
+echo "Detailed capability check:"
+if [ -f /proc/self/status ]; then
+    grep "^Cap" /proc/self/status | while read line; do
+        echo "  $line"
+    done
+else
+    echo "  Cannot read capability information"
+fi
+
+# Check if we're in a user namespace
+echo "User namespace check:"
+if [ -f /proc/self/uid_map ]; then
+    echo "  UID mapping: $(cat /proc/self/uid_map)"
+else
+    echo "  No UID mapping (not in user namespace)"
 fi
 
 echo ""
@@ -71,9 +102,17 @@ ping -c 3 $SERVER_IP || echo "Ping failed - server may be unreachable"
 echo ""
 
 echo "=== Stopping all VPN services ==="
-ipsec stop 2>/dev/null || echo "IPSec already stopped"
+echo "Stopping IPSec..."
+ipsec stop 2>/dev/null || echo "IPSec already stopped or not running"
+
+echo "Killing VPN processes..."
 killall -9 charon starter xl2tpd pppd 2>/dev/null || echo "No VPN processes to kill"
+
+echo "Cleaning up PID files..."
+rm -f /var/run/charon.pid /var/run/starter.pid /var/run/starter.charon.pid 2>/dev/null || true
+
 sleep 2
+echo "✓ VPN cleanup completed"
 echo ""
 
 echo "=== Creating Synology-Compatible IPSec Configuration ==="
@@ -142,43 +181,64 @@ echo ""
 
 echo "=== Starting strongSwan for Synology ==="
 echo "Attempting to start strongSwan daemon..."
+echo "Current working directory: $(pwd)"
+echo "Available strongSwan binaries:"
+which ipsec charon starter 2>/dev/null || echo "Some strongSwan binaries not found in PATH"
+echo ""
 
 # Method 1: Try direct charon startup
 echo "1. Trying direct charon startup..."
-charon --use-syslog --debug-ike 1 --debug-knl 1 &
+echo "Command: charon --use-syslog --debug-ike 1 --debug-knl 1"
+charon --use-syslog --debug-ike 1 --debug-knl 1 2>&1 &
 CHARON_PID=$!
+echo "Started charon with PID: $CHARON_PID"
 sleep 3
 
 # Check if charon is running
 if kill -0 $CHARON_PID 2>/dev/null; then
     echo "✓ Charon started successfully (PID: $CHARON_PID)"
+    echo "Charon process info:"
+    ps aux | grep charon | grep -v grep || echo "No charon process visible in ps"
 else
     echo "✗ Charon failed to start, trying alternative method..."
     
     # Method 2: Try traditional ipsec start with timeout
     echo "2. Trying traditional ipsec start..."
-    timeout 10 ipsec start || echo "ipsec start timed out or failed"
+    echo "Command: timeout 10 ipsec start"
+    timeout 10 ipsec start 2>&1 || echo "ipsec start timed out or failed"
     sleep 3
 fi
 
 # Verify strongSwan is running
 echo "Checking strongSwan status..."
+echo "Looking for charon process:"
+pgrep -l charon || echo "No charon process found"
+
 if pgrep charon >/dev/null; then
     echo "✓ strongSwan daemon is running"
+    echo "Process details:"
+    ps aux | grep charon | grep -v grep
 else
     echo "✗ strongSwan daemon not running - attempting manual start..."
     
     # Method 3: Force start with specific parameters
     echo "3. Force starting with specific parameters..."
-    /usr/lib/ipsec/starter --daemon charon --debug 2 &
+    echo "Command: /usr/lib/ipsec/starter --daemon charon --debug 2"
+    /usr/lib/ipsec/starter --daemon charon --debug 2 2>&1 &
+    STARTER_PID=$!
+    echo "Started starter with PID: $STARTER_PID"
     sleep 5
     
     if pgrep charon >/dev/null; then
         echo "✓ strongSwan force-started successfully"
+        echo "Process details:"
+        ps aux | grep -E "(charon|starter)" | grep -v grep
     else
         echo "❌ Failed to start strongSwan - container may need privileged mode"
+        echo "Checking system logs for errors:"
+        dmesg | tail -10 | grep -i ipsec || echo "No IPSec-related kernel messages"
         echo "   Try running: docker-compose run --privileged vpn-monitor /app/synology_debug.sh"
-        exit 1
+        echo "   Continuing with debug anyway..."
     fi
 fi
 echo ""
