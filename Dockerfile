@@ -19,6 +19,9 @@ RUN apt-get update && apt-get install -y \
     ppp \
     curl \
     iputils-ping \
+    netcat-openbsd \
+    tcpdump \
+    strace \
     && rm -rf /var/lib/apt/lists/*
 
 # Install Python dependencies
