@@ -161,7 +161,7 @@ docker-compose run --rm vpn-monitor /app/vpn_debug.sh
 docker-compose run --rm vpn-monitor /app/synology_debug.sh
 
 # Or run server connectivity test
-docker-compose run --rm vpn-monitor /app/test_server.sh nas1.italic.fr
+docker-compose run --rm vpn-monitor /app/test_server.sh vpn_server_address
 
 # Access container shell
 docker-compose run --rm vpn-monitor bash
