@@ -204,9 +204,7 @@ conn windows11_match
     aggressive=no
     ikelifetime=86400s
     keylife=3600s
-    dpdaction=clear
-    dpddelay=30s
-    dpdtimeout=120s
+    dpdaction=none
     forceencaps=yes
     margintime=9m
     rekeyfuzz=100%
@@ -461,7 +459,7 @@ conn windows11_exact
     aggressive=no
     ikelifetime=480m
     keylife=60m
-    dpdaction=clear
+    dpdaction=none
     margintime=9m
     rekeyfuzz=100%
     forceencaps=yes
@@ -503,9 +501,7 @@ conn synology_legacy
     aggressive=no
     ikelifetime=8h
     keylife=60m
-    dpdaction=clear
-    dpddelay=30s
-    dpdtimeout=120s
+    dpdaction=none
     forceencaps=yes
 EOF
 

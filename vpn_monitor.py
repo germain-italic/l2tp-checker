@@ -252,9 +252,7 @@ conn vpntest
     aggressive=no
     ikelifetime=86400s
     keylife=3600s
-    dpdaction=clear
-    dpddelay=30s
-    dpdtimeout=120s
+    dpdaction=none
     forceencaps=yes
     margintime=9m
     rekeyfuzz=100%
