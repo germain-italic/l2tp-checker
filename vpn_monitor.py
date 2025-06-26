@@ -226,8 +226,9 @@ class VPNMonitor:
         secrets_file = '/etc/ipsec.secrets'
         
         # IPSec configuration for Synology DSM7 - FIXED peer ID issue
-        # Based on server logs showing "no suitable connection for peer '172.25.137.90'"
+        # Based on server logs showing "no suitable connection for peer '@germain'"
         # Windows 11 uses username as peer ID, not IP address
+        # CRITICAL: Synology expects plain username, not @username format
         config_content = f"""
 config setup
     charondebug="ike 2, knl 1, cfg 1"
@@ -247,7 +248,7 @@ conn vpntest
     ike=3des-sha1-modp1024,aes256-sha1-modp1024,aes128-sha1-modp1024!
     esp=3des-sha1,aes256-sha1,aes128-sha1!
     rekey=no
-    leftid={server['username']}
+    leftid="{server['username']}"
     rightid={server['ip']}
     aggressive=yes
     ikelifetime=28800s
@@ -262,10 +263,10 @@ conn vpntest
             f.write(config_content)
         
         # Create secrets file with proper format - FIXED peer ID
-        # Must match the leftid in the connection configuration
+        # Must match the leftid in the connection configuration (quoted username)
         secrets_content = f"""# strongSwan IPsec secrets file
 # Fixed peer ID to match Windows 11 behavior
-{server['username']} {server['ip']} : PSK "{server['shared_key']}"
+"{server['username']}" {server['ip']} : PSK "{server['shared_key']}"
 {server['ip']} %any : PSK "{server['shared_key']}"
 %any {server['ip']} : PSK "{server['shared_key']}"
 
@@ -279,7 +280,7 @@ conn vpntest
             f.write(secrets_content)
         os.chmod(secrets_file, 0o600)
         
-        logger.debug(f"Created IPSec config with leftid={server['username']} for {server['ip']}")
+        logger.debug(f"Created IPSec config with leftid=\"{server['username']}\" for {server['ip']}")
         
         return config_file
 
