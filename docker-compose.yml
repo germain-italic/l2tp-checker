@@ -1,0 +1,37 @@
+version: '3.8'
+
+services:
+  vpn-monitor:
+    build: .
+    container_name: vpn-monitor
+    restart: unless-stopped
+    
+    # Required for VPN operations
+    privileged: true
+    cap_add:
+      - NET_ADMIN
+      - SYS_MODULE
+    
+    # Mount configuration
+    volumes:
+      - ./.env:/app/.env:ro
+      - vpn-logs:/var/log/vpn-monitor
+      - /lib/modules:/lib/modules:ro
+    
+    # Network configuration
+    network_mode: host
+    
+    # Environment variables (can be overridden by .env file)
+    environment:
+      - PYTHONUNBUFFERED=1
+    
+    # Health check
+    healthcheck:
+      test: ["CMD", "python3", "/app/vpn_monitor.py", "--health-check"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+
+volumes:
+  vpn-logs:
