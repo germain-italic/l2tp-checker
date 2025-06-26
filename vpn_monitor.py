@@ -223,12 +223,13 @@ class VPNMonitor:
         config_file = '/etc/ipsec.conf'
         secrets_file = '/etc/ipsec.secrets'
         
-        # Simplified and more compatible IPSec configuration
+        # More compatible IPSec configuration with broader algorithm support
         config_content = f"""
 config setup
-    charondebug="ike 1, knl 1, cfg 0"
+    charondebug="ike 2, knl 1, cfg 1, net 1, asn 1, enc 1, lib 1, esp 1, tls 1, tnc 1, imc 1, imv 1, pts 1"
     strictcrlpolicy=no
     uniqueids=no
+    nat_traversal=yes
 
 conn vpntest
     type=transport
@@ -239,23 +240,28 @@ conn vpntest
     rightprotoport=17/1701
     authby=psk
     auto=add
-    ike=aes256-sha1-modp1024,aes128-sha1-modp1024,3des-sha1-modp1024!
-    esp=aes256-sha1-modp1024,aes128-sha1-modp1024,3des-sha1-modp1024!
+    ike=aes256-sha1-modp1024,aes128-sha1-modp1024,3des-sha1-modp1024,aes256-md5-modp1024,aes128-md5-modp1024,3des-md5-modp1024!
+    esp=aes256-sha1,aes128-sha1,3des-sha1,aes256-md5,aes128-md5,3des-md5!
     rekey=no
     leftid=%any
     rightid={server['ip']}
     aggressive=yes
     ikelifetime=8h
     keylife=1h
+    dpdaction=clear
+    dpddelay=300s
+    dpdtimeout=90s
+    forceencaps=yes
 """
         
         with open(config_file, 'w') as f:
             f.write(config_content)
         
-        # Create secrets file with universal format
+        # Create secrets file with multiple formats for compatibility
         secrets_content = f"""# strongSwan IPsec secrets file
 {server['ip']} %any : PSK "{server['shared_key']}"
 %any {server['ip']} : PSK "{server['shared_key']}"
+%any %any : PSK "{server['shared_key']}"
 """
         with open(secrets_file, 'w') as f:
             f.write(secrets_content)
@@ -588,14 +594,14 @@ password {server['password']}
             logger.debug(f"Attempting to bring up IPSec connection for {server['name']}")
             
             # Bring up the connection
-            up_cmd = ['ipsec', 'up', 'vpntest']
-            up_result = subprocess.run(up_cmd, capture_output=True, timeout=20)
+            up_cmd = ['ipsec', 'up', 'vpntest', '--debug']
+            up_result = subprocess.run(up_cmd, capture_output=True, timeout=25)
             up_output = up_result.stdout.decode() + " " + up_result.stderr.decode()
             
             logger.debug(f"IPSec up command output: {up_output}")
             
-            # Wait for connection establishment with periodic checks
-            max_wait = 15
+            # Wait for connection establishment with more frequent checks
+            max_wait = 20
             wait_time = 0
             connection_established = False
             
@@ -604,12 +610,21 @@ password {server['password']}
                     logger.debug(f"IPSec established after {wait_time} seconds")
                     connection_established = True
                     break
-                time.sleep(2)
+                time.sleep(1)
                 wait_time += 1
             
             if not connection_established:
                 connection_time = int((time.time() - start_time) * 1000)
-                return False, connection_time, f"IPSec tunnel not established after {max_wait} seconds. Command output: {up_output}"
+                
+                # Get detailed status for debugging
+                status_cmd = ['ipsec', 'statusall']
+                status_result = subprocess.run(status_cmd, capture_output=True, timeout=5)
+                status_info = status_result.stdout.decode() if status_result.returncode == 0 else "No status available"
+                
+                # Check for specific error patterns
+                error_details = self._analyze_ipsec_error(up_output, status_info)
+                
+                return False, connection_time, f"IPSec tunnel not established after {max_wait}s. {error_details}"
             
             logger.debug(f"IPSec established, starting L2TP for {server['name']}")
             
@@ -749,6 +764,34 @@ password {server['password']}
         except Exception as e:
             logger.debug(f"Connection verification failed: {e}")
             return False
+
+    def _analyze_ipsec_error(self, up_output: str, status_info: str) -> str:
+        """Analyze IPSec connection errors and provide helpful error messages."""
+        try:
+            error_msg = "Connection failed"
+            
+            # Check for common error patterns
+            if "no proposal chosen" in up_output.lower():
+                error_msg = "Encryption algorithm mismatch - server rejected our proposals"
+            elif "authentication failed" in up_output.lower():
+                error_msg = "Authentication failed - likely incorrect shared key"
+            elif "timeout" in up_output.lower():
+                error_msg = "Connection timeout - server may be unreachable or firewall blocking"
+            elif "no response" in up_output.lower():
+                error_msg = "No response from server - check server configuration"
+            elif "establishing connection" in up_output.lower() and "failed" in up_output.lower():
+                if "retransmit" in up_output.lower():
+                    error_msg = "Server not responding to handshake - possible firewall or server config issue"
+                else:
+                    error_msg = "Connection establishment failed"
+            
+            # Add technical details for debugging
+            error_msg += f". Technical details: {up_output[:200]}..."
+            
+            return error_msg
+            
+        except Exception as e:
+            return f"Error analysis failed: {e}. Raw output: {up_output[:100]}..."
 
     def _log_result(self, server: Dict[str, str], success: bool, connection_time: Optional[int], error_message: Optional[str]):
         """Log test result to database."""
