@@ -15,7 +15,6 @@ RUN apt-get update && apt-get install -y \
     gcc \
     libffi-dev \
     libssl-dev \
-    ipsec-tools \
     ppp \
     curl \
     iputils-ping \
