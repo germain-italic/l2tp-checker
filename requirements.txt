@@ -1,0 +1,4 @@
+python-dotenv>=1.0.0
+PyMySQL>=1.0.2
+requests>=2.31.0
+cryptography>=41.0.0
