@@ -181,29 +181,30 @@ class VPNMonitor:
     def _stop_all_vpn_connections(self):
         """Stop all VPN connections."""
         try:
-            # Stop strongSwan connections first
-            subprocess.run(['ipsec', 'down', 'vpntest'], capture_output=True, timeout=10)
+            logger.debug("Stopping all VPN connections and services")
             
-            # Stop xl2tpd processes
-            subprocess.run(['killall', '-9', 'xl2tpd'], capture_output=True, timeout=5)
-            subprocess.run(['killall', '-9', 'pppd'], capture_output=True, timeout=5)
+            # Stop strongSwan connections first (ignore errors)
+            subprocess.run(['ipsec', 'down', 'vpntest'], capture_output=True, timeout=5)
             
-            # Clean up control files
-            subprocess.run(['rm', '-f', '/var/run/xl2tpd/l2tp-control'], capture_output=True)
+            # Kill all VPN-related processes forcefully
+            processes_to_kill = ['xl2tpd', 'pppd', 'charon', 'starter']
+            for process in processes_to_kill:
+                subprocess.run(['killall', '-9', process], capture_output=True, timeout=3)
             
-            # Stop strongSwan service completely
-            subprocess.run(['ipsec', 'stop'], capture_output=True, timeout=15)
+            # Clean up all control and PID files
+            files_to_remove = [
+                '/var/run/xl2tpd/l2tp-control',
+                '/var/run/charon.pid',
+                '/var/run/starter.charon.pid',
+                '/var/run/starter.pid',
+                '/var/run/charon.ctl'
+            ]
             
-            # Kill any remaining processes
-            subprocess.run(['killall', '-9', 'charon'], capture_output=True, timeout=5)
-            subprocess.run(['killall', '-9', 'starter'], capture_output=True, timeout=5)
+            for file_path in files_to_remove:
+                subprocess.run(['rm', '-f', file_path], capture_output=True)
             
-            # Clean up PID files
-            subprocess.run(['rm', '-f', '/var/run/charon.pid'], capture_output=True)
-            subprocess.run(['rm', '-f', '/var/run/starter.charon.pid'], capture_output=True)
-            
-            # Wait for cleanup
-            time.sleep(2)
+            # Wait for complete cleanup
+            time.sleep(3)
             
         except Exception as e:
             logger.debug(f"VPN cleanup: {e}")
@@ -213,13 +214,12 @@ class VPNMonitor:
         config_file = '/etc/ipsec.conf'
         secrets_file = '/etc/ipsec.secrets'
         
-        # More compatible IPSec configuration
+        # Simplified and more compatible IPSec configuration
         config_content = f"""
 config setup
-    charondebug="ike 2, knl 1, cfg 2"
+    charondebug="ike 1, knl 1, cfg 0"
     strictcrlpolicy=no
     uniqueids=no
-    plutostart=no
 
 conn vpntest
     type=transport
@@ -229,26 +229,24 @@ conn vpntest
     right={server['ip']}
     rightprotoport=17/1701
     authby=psk
-    auto=start
-    ike=aes256-sha1-modp1024,aes128-sha1-modp1024,3des-sha1-modp1024,aes256-sha256-modp1024!
-    esp=aes256-sha1,aes128-sha1,3des-sha1!
+    auto=add
+    ike=aes256-sha1-modp1024,aes128-sha1-modp1024,3des-sha1-modp1024!
+    esp=aes256-sha1-modp1024,aes128-sha1-modp1024,3des-sha1-modp1024!
     rekey=no
-    leftid=
+    leftid=%any
     rightid={server['ip']}
     aggressive=yes
-    ikelifetime=24h
-    keylife=8h
-    dpdaction=restart
-    dpddelay=30s
-    dpdtimeout=120s
+    ikelifetime=8h
+    keylife=1h
 """
         
         with open(config_file, 'w') as f:
             f.write(config_content)
         
-        # Create secrets file with proper format
+        # Create secrets file with universal format
         secrets_content = f"""# strongSwan IPsec secrets file
-: PSK "{server['shared_key']}"
+{server['ip']} %any : PSK "{server['shared_key']}"
+%any {server['ip']} : PSK "{server['shared_key']}"
 """
         with open(secrets_file, 'w') as f:
             f.write(secrets_content)
@@ -333,6 +331,64 @@ password {server['password']}
         
         return config_file
 
+    def _start_strongswan_daemon(self) -> bool:
+        """Start strongSwan daemon directly."""
+        try:
+            logger.debug("Starting strongSwan daemon directly")
+            
+            # Start charon daemon directly
+            charon_cmd = ['charon', '--use-syslog']
+            charon_process = subprocess.Popen(
+                charon_cmd, 
+                stdout=subprocess.PIPE, 
+                stderr=subprocess.PIPE,
+                preexec_fn=os.setsid
+            )
+            
+            # Wait for charon to start
+            time.sleep(5)
+            
+            # Check if charon is running
+            charon_check = subprocess.run(['pgrep', 'charon'], capture_output=True, timeout=5)
+            if charon_check.returncode == 0:
+                logger.debug("Charon daemon started successfully")
+                return True
+            else:
+                logger.debug("Failed to start charon daemon")
+                return False
+                
+        except Exception as e:
+            logger.debug(f"Failed to start strongSwan daemon: {e}")
+            return False
+
+    def _load_ipsec_config(self) -> bool:
+        """Load IPSec configuration using stroke interface."""
+        try:
+            logger.debug("Loading IPSec configuration")
+            
+            # Use stroke to load configuration
+            stroke_cmd = ['stroke', 'up-nb', 'vpntest']
+            stroke_result = subprocess.run(stroke_cmd, capture_output=True, timeout=10)
+            
+            if stroke_result.returncode == 0:
+                logger.debug("Configuration loaded via stroke")
+                return True
+            else:
+                # Try alternative method with ipsec
+                reload_cmd = ['ipsec', 'reload']
+                reload_result = subprocess.run(reload_cmd, capture_output=True, timeout=10)
+                
+                if reload_result.returncode == 0:
+                    logger.debug("Configuration loaded via ipsec reload")
+                    return True
+                else:
+                    logger.debug(f"Failed to load config: stroke={stroke_result.stderr.decode()}, ipsec={reload_result.stderr.decode()}")
+                    return False
+                    
+        except Exception as e:
+            logger.debug(f"Failed to load IPSec configuration: {e}")
+            return False
+
     def _test_vpn_connection(self, server: Dict[str, str]) -> Tuple[bool, Optional[int], Optional[str]]:
         """
         Test actual VPN connection to a server.
@@ -355,57 +411,59 @@ password {server['password']}
             # Stop any existing VPN connections first
             self._stop_all_vpn_connections()
             
-            # Wait for complete cleanup
-            time.sleep(3)
-            
             # Create VPN configurations
             ipsec_config = self._create_ipsec_config(server, config_dir)
             xl2tpd_config = self._create_xl2tpd_config(server, config_dir)
             
-            logger.debug(f"Starting IPSec with new configuration for {server['name']}")
+            logger.debug(f"Starting strongSwan daemon for {server['name']}")
             
-            # Start strongSwan fresh
-            ipsec_cmd = ['ipsec', 'start']
-            ipsec_result = subprocess.run(ipsec_cmd, capture_output=True, timeout=30)
-            
-            if ipsec_result.returncode != 0:
+            # Start strongSwan daemon directly
+            if not self._start_strongswan_daemon():
                 connection_time = int((time.time() - start_time) * 1000)
-                error_msg = ipsec_result.stderr.decode() + " " + ipsec_result.stdout.decode()
-                return False, connection_time, f"IPSec start failed: {error_msg.strip()}"
+                return False, connection_time, "Failed to start strongSwan daemon"
             
-            # Wait for strongSwan to fully start and initialize
-            time.sleep(8)
+            # Load configuration
+            if not self._load_ipsec_config():
+                connection_time = int((time.time() - start_time) * 1000)
+                return False, connection_time, "Failed to load IPSec configuration"
             
-            # Reload configuration to ensure it's loaded
-            reload_cmd = ['ipsec', 'reload']
-            reload_result = subprocess.run(reload_cmd, capture_output=True, timeout=10)
-            
-            # Wait for reload
+            # Wait for daemon to be ready
             time.sleep(3)
             
-            # Check status to verify configuration was loaded
-            status_cmd = ['ipsec', 'statusall']
-            status_result = subprocess.run(status_cmd, capture_output=True, timeout=5)
-            status_output = status_result.stdout.decode()
+            logger.debug(f"Attempting to bring up IPSec connection for {server['name']}")
             
-            if 'vpntest' not in status_output:
-                connection_time = int((time.time() - start_time) * 1000)
-                return False, connection_time, f"VPN configuration not loaded properly. Status: {status_output}"
+            # Try multiple methods to bring up the connection
+            connection_methods = [
+                ['ipsec', 'up', 'vpntest'],
+                ['stroke', 'up', 'vpntest'],
+                ['swanctl', '--initiate', '--child', 'vpntest']
+            ]
             
-            logger.debug(f"Configuration loaded, bringing up IPSec connection for {server['name']}")
+            up_success = False
+            up_output = ""
             
-            # Try to bring up the connection
-            up_cmd = ['ipsec', 'up', 'vpntest']
-            up_result = subprocess.run(up_cmd, capture_output=True, timeout=30)
+            for method in connection_methods:
+                try:
+                    logger.debug(f"Trying connection method: {' '.join(method)}")
+                    up_result = subprocess.run(method, capture_output=True, timeout=20)
+                    up_output += f"{' '.join(method)}: {up_result.stdout.decode()} {up_result.stderr.decode()}\n"
+                    
+                    if up_result.returncode == 0:
+                        up_success = True
+                        logger.debug(f"Connection method succeeded: {' '.join(method)}")
+                        break
+                        
+                except Exception as e:
+                    up_output += f"{' '.join(method)}: Exception {e}\n"
+                    continue
             
-            up_output = up_result.stdout.decode() + up_result.stderr.decode()
             logger.debug(f"IPSec up command output: {up_output}")
             
-            # Wait longer for IPSec to establish
-            time.sleep(5)
+            # Wait for IPSec to establish
+            time.sleep(8)
             
             # Give more time for connection establishment and check periodically
-            max_wait = 20
+            max_wait = 25
             wait_time = 0
             while wait_time < max_wait:
                 if self._check_ipsec_status():
@@ -421,16 +479,16 @@ password {server['password']}
                 status_cmd = ['ipsec', 'statusall']
                 status_result = subprocess.run(status_cmd, capture_output=True, timeout=5)
                 status_info = status_result.stdout.decode() if status_result.returncode == 0 else "No status available"
-                return False, connection_time, f"IPSec tunnel not established after {max_wait}s. Up output: {up_output}. Status: {status_info}"
+                return False, connection_time, f"IPSec tunnel not established after {max_wait}s. Methods tried: {up_output}. Status: {status_info}"
             
             logger.debug(f"IPSec established, starting L2TP for {server['name']}")
             
-            # Start xl2tpd with debugging
-            xl2tpd_cmd = ['xl2tpd', '-D', '-c', '/etc/xl2tpd/xl2tpd.conf', '-C', '/var/run/xl2tpd/l2tp-control']
+            # Start xl2tpd
+            xl2tpd_cmd = ['xl2tpd', '-c', '/etc/xl2tpd/xl2tpd.conf', '-C', '/var/run/xl2tpd/l2tp-control']
             xl2tpd_process = subprocess.Popen(xl2tpd_cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
             
             # Wait for xl2tpd to start properly
-            time.sleep(5)
+            time.sleep(3)
             
             # Attempt L2TP connection
             try:
@@ -446,8 +504,8 @@ password {server['password']}
                 else:
                     logger.debug("L2TP control file not found")
                 
-                # Wait longer for connection establishment
-                time.sleep(15)
+                # Wait for connection establishment
+                time.sleep(10)
                 
             except Exception as e:
                 logger.debug(f"L2TP connection attempt failed: {e}")
