@@ -394,7 +394,8 @@ password {server['password']}
                 # Try to get more information about what's wrong
                 ps_result = subprocess.run(['ps', 'aux'], capture_output=True, timeout=5)
                 ps_output = ps_result.stdout.decode()
-                logger.debug(f"Process list (filtered for ipsec/charon): {[line for line in ps_output.split('\\n') if 'ipsec' in line or 'charon' in line]}")
+                ipsec_processes = [line for line in ps_output.split('\n') if 'ipsec' in line or 'charon' in line]
+                logger.debug(f"Process list (filtered for ipsec/charon): {ipsec_processes}")
                 
                 return False
                 
