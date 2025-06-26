@@ -249,11 +249,11 @@ conn vpntest
     leftid=%any
     rightid={server['ip']}
     aggressive=no
-    ikelifetime=28800s
-    keylife=3600s
+    ikelifetime=8h
+    keylife=1h
     dpdaction=clear
-    dpddelay=300s
-    dpdtimeout=90s
+    dpddelay=30s
+    dpdtimeout=120s
     forceencaps=yes
 """
         

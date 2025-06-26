@@ -201,11 +201,11 @@ conn windows11_match
     leftid=%any
     rightid=$SERVER_IP
     aggressive=no
-    ikelifetime=28800s
-    keylife=3600s
+    ikelifetime=480m
+    keylife=60m
     dpdaction=clear
-    dpddelay=300s
-    dpdtimeout=90s
+    dpddelay=30s
+    dpdtimeout=120s
     forceencaps=yes
 EOF
 
@@ -349,7 +349,7 @@ TCPDUMP_PID=$!
 sleep 2
 
 echo "Attempting connection with Synology-compatible parameters..."
-timeout 25 ipsec up synology 2>&1 | tee /tmp/synology_up_output.log
+timeout 25 ipsec up windows11_match 2>&1 | tee /tmp/synology_up_output.log
 
 sleep 5
 
@@ -479,7 +479,6 @@ config setup
     charondebug="ike 2, knl 1, cfg 1"
     strictcrlpolicy=no
     uniqueids=no
-    nat_traversal=yes
 
 conn synology_legacy
     type=transport
@@ -490,16 +489,18 @@ conn synology_legacy
     rightprotoport=17/1701
     authby=psk
     auto=add
-    ike=des-md5-modp768!
-    esp=des-md5!
+    ike=aes256-sha1-modp2048!
+    esp=aes256-sha1!
     rekey=no
     leftid=%any
     rightid=$SERVER_IP
-    aggressive=yes
-    ikelifetime=480m
+    aggressive=no
+    ikelifetime=8h
     keylife=60m
-    dpdaction=none
-    forceencaps=no
+    dpdaction=clear
+    dpddelay=30s
+    dpdtimeout=120s
+    forceencaps=yes
 EOF
 
 ipsec reload
