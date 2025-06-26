@@ -229,7 +229,28 @@ config setup
     charondebug="ike 2, knl 1, cfg 1, net 1, asn 1, enc 1, lib 1, esp 1, tls 1, tnc 1, imc 1, imv 1, pts 1"
     strictcrlpolicy=no
     uniqueids=no
-    nat_traversal=yes
+
+conn vpntest
+    type=transport
+    keyexchange=ikev1
+    left=%defaultroute
+    leftprotoport=17/1701
+    right={server['ip']}
+    rightprotoport=17/1701
+    authby=psk
+    auto=add
+    ike=aes256-sha1-modp1024,aes128-sha1-modp1024,3des-sha1-modp1024,aes256-md5-modp1024,aes128-md5-modp1024,3des-md5-modp1024!
+    esp=aes256-sha1,aes128-sha1,3des-sha1,aes256-md5,aes128-md5,3des-md5!
+    rekey=no
+    leftid=%any
+    rightid={server['ip']}
+    aggressive=yes
+    ikelifetime=8h
+    keylife=1h
+    dpdaction=clear
+    dpddelay=300s
+    dpdtimeout=90s
+    forceencaps=yes
 
 conn vpntest
     type=transport
@@ -594,7 +615,7 @@ password {server['password']}
             logger.debug(f"Attempting to bring up IPSec connection for {server['name']}")
             
             # Bring up the connection
-            up_cmd = ['ipsec', 'up', 'vpntest', '--debug']
+            up_cmd = ['ipsec', 'up', 'vpntest']
             up_result = subprocess.run(up_cmd, capture_output=True, timeout=25)
             up_output = up_result.stdout.decode() + " " + up_result.stderr.decode()
             
