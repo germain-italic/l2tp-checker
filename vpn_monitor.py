@@ -260,10 +260,17 @@ conn vpntest
         secrets_content = f"""# strongSwan IPsec secrets file
 {server['ip']} %any : PSK "{server['shared_key']}"
 %any {server['ip']} : PSK "{server['shared_key']}"
+
+# Debug: Server details
+# Server: {server['name']}
+# IP: {server['ip']}
+# Shared key length: {len(server['shared_key'])} characters
 """
         with open(secrets_file, 'w') as f:
             f.write(secrets_content)
         os.chmod(secrets_file, 0o600)
+        
+        logger.debug(f"Created IPSec secrets file with key for {server['ip']}")
         
         return config_file
 

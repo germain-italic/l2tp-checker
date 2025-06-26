@@ -54,7 +54,8 @@ echo ""
 
 echo "=== IPSec Secrets (first line) ==="
 if [ -f /etc/ipsec.secrets ]; then
-    head -1 /etc/ipsec.secrets
+    echo "Secrets file exists, showing first 5 lines (masking actual keys):"
+    head -5 /etc/ipsec.secrets | sed 's/PSK "[^"]*"/PSK "***MASKED***"/g'
 else
     echo "No IPSec secrets found"
 fi
@@ -87,6 +88,34 @@ echo ""
 
 echo "=== Configuration Check After Reload ==="
 ipsec statusall
+echo ""
+
+echo "=== Environment Variables Check ==="
+echo "VPN_SERVERS (first 50 chars): ${VPN_SERVERS:0:50}..."
+echo "DB_HOST: $DB_HOST"
+echo "Monitor ID: $MONITOR_ID"
+echo ""
+
+echo "=== Python Environment Test ==="
+python3 -c "
+import os
+from dotenv import load_dotenv
+load_dotenv()
+servers = os.getenv('VPN_SERVERS', '')
+print(f'VPN_SERVERS from Python: {servers[:50]}...')
+if servers:
+    parts = servers.split(',')[0].split(':')
+    print(f'First server parts count: {len(parts)}')
+    if len(parts) >= 5:
+        print(f'Server name: {parts[0]}')
+        print(f'Server IP: {parts[1]}')
+        print(f'Username: {parts[2]}')
+        print(f'Shared key length: {len(parts[4])} chars')
+    else:
+        print('Invalid server configuration format')
+else:
+    print('No VPN_SERVERS found')
+"
 echo ""
 
 echo "=== Manual Connection Attempt ==="
