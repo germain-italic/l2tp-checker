@@ -35,10 +35,11 @@ WORKDIR /app
 # Copy application files
 COPY vpn_monitor.py /app/
 COPY run_monitor.sh /app/
+COPY vpn_debug.sh /app/
 COPY .env.dist /app/
 
 # Make scripts executable
-RUN chmod +x /app/run_monitor.sh /app/vpn_monitor.py
+RUN chmod +x /app/run_monitor.sh /app/vpn_monitor.py /app/vpn_debug.sh
 
 # Create directories for VPN configurations
 RUN mkdir -p /etc/ipsec.d /var/run/xl2tpd /var/log/vpn-monitor
