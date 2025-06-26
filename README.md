@@ -1,6 +1,25 @@
 # VPN Monitor
 
-A cross-platform VPN monitoring system that tests L2TP/IPSec VPN connections and logs results to a MySQL database. Compatible with Debian native, macOS, and Debian WSL2.
+A cross-platform VPN monitoring system that tests VPN server connectivity and logs results to a MySQL database. Compatible with Debian native, macOS, and Debian WSL2.
+
+## Important Note About VPN Testing
+
+**Current Version (v1.0.1)**: This version tests VPN server **connectivity only** - it verifies that the VPN server is reachable and responding on the L2TP port (1701), but does **not** establish an actual VPN tunnel or test the full L2TP/IPSec connection.
+
+### What is Actually Tested:
+- ✅ **Network connectivity** to the VPN server IP address (ping test)
+- ✅ **L2TP port accessibility** (UDP port 1701 connectivity test)
+- ✅ **Response time** measurement for connectivity tests
+- ✅ **Server availability** monitoring over time
+
+### What is NOT Tested:
+- ❌ **Actual VPN tunnel establishment** (no L2TP/IPSec handshake)
+- ❌ **Authentication** with VPN credentials
+- ❌ **Traffic routing** through the VPN tunnel
+- ❌ **IP address changes** after VPN connection
+- ❌ **End-to-end encrypted connectivity**
+
+This approach allows for lightweight monitoring without requiring root privileges, complex VPN client installations, or credential management. Future versions may include full tunnel testing capabilities.
 
 ## Compatibility Chart
 
@@ -111,9 +130,10 @@ The setup script automatically detects your system and chooses the best installa
 ### Environment Variables (.env)
 
 ```bash
-# VPN Server Configuration
-# Format: server_name:server_ip:username:password:shared_key
-VPN_SERVERS=server1:vpn1.example.com:user1:pass1:sharedkey1,server2:vpn2.example.com:user2:pass2:sharedkey2
+# VPN Server Configuration  
+# Format: server_name:server_ip
+# Note: Only server name and IP are needed for connectivity testing
+VPN_SERVERS=server1:vpn1.example.com,server2:vpn2.example.com,server3:192.168.1.100
 
 # MySQL Database Configuration
 DB_HOST=your-mysql-host.com
@@ -129,12 +149,15 @@ MONITOR_ID=custom-identifier
 
 ### VPN Server Format
 
-Each VPN server entry should follow this format:
+Each VPN server entry should follow this simplified format for connectivity testing:
 ```
-server_name:server_ip:username:password:shared_key
+server_name:server_ip
 ```
 
-Multiple servers are separated by commas.
+Multiple servers are separated by commas. Examples:
+- `office-vpn:vpn.company.com`
+- `home-server:192.168.1.100`
+- `backup-vpn:backup.example.org`
 
 ## Database Schema
 
@@ -230,7 +253,8 @@ ORDER BY last_seen DESC;
 4. **VPN Tests Always Fail**
    - Verify VPN server addresses are correct
    - Check network connectivity
-   - Ensure VPN servers are running
+   - Ensure VPN servers are running and L2TP service is active
+   - Remember: This version only tests connectivity, not full VPN functionality
 
 5. **Permission Denied Errors**
    - Make sure scripts are executable: `chmod +x *.sh`

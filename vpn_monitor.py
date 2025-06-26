@@ -76,16 +76,13 @@ class VPNMonitor:
         servers = []
         for server_config in servers_str.split(','):
             parts = server_config.strip().split(':')
-            if len(parts) != 5:
+            if len(parts) != 2:
                 logger.warning(f"Invalid server config format: {server_config}")
                 continue
             
             servers.append({
                 'name': parts[0],
-                'ip': parts[1],
-                'username': parts[2],
-                'password': parts[3],
-                'shared_key': parts[4]
+                'ip': parts[1]
             })
         
         return servers
