@@ -22,8 +22,8 @@ RUN apt-get update && apt-get install -y \
 
 # Install Python dependencies
 COPY requirements.txt /tmp/requirements.txt
-RUN pip3 install --no-cache-dir -r /tmp/requirements.txt && \
-    pip3 install --no-cache-dir mysqlclient
+RUN pip3 install --no-cache-dir --break-system-packages -r /tmp/requirements.txt && \
+    pip3 install --no-cache-dir --break-system-packages mysqlclient
 
 # Create working directory
 WORKDIR /app
