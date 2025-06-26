@@ -219,6 +219,15 @@ ORDER BY last_seen DESC;
 
 ## Troubleshooting
 
+### Synology NAS Compatibility
+
+**Synology DSM7 L2TP/IPSec servers:**
+- If you cannot enable "SHA2-256 compatible mode" due to Windows/macOS client compatibility
+- The monitor automatically uses legacy encryption (3DES/MD5) for maximum compatibility
+- This configuration works with Windows 11 and macOS built-in VPN clients
+- Check Synology VPN Server logs in Log Center for connection attempts
+- Ensure UDP ports 500, 4500, 1701 are allowed in Synology firewall
+
 ### Build Performance
 
 **Slow builds:**

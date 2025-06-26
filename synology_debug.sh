@@ -117,12 +117,13 @@ echo ""
 
 echo "=== Creating Synology-Compatible IPSec Configuration ==="
 
-# Create Synology-optimized configuration
+# Create Synology-optimized configuration for servers WITHOUT SHA2-256 mode
 cat > /etc/ipsec.conf << EOF
 config setup
     charondebug="ike 2, knl 1, cfg 1"
     strictcrlpolicy=no
     uniqueids=no
+    cachecrls=no
 
 conn synology
     type=transport
@@ -133,21 +134,25 @@ conn synology
     rightprotoport=17/1701
     authby=psk
     auto=add
-    ike=3des-sha1-modp1024,aes128-sha1-modp1024!
-    esp=3des-sha1,aes128-sha1!
+    ike=3des-sha1-modp1024,3des-md5-modp1024,aes128-sha1-modp1024,aes128-md5-modp1024!
+    esp=3des-sha1,3des-md5,aes128-sha1,aes128-md5!
     rekey=no
     leftid=%any
     rightid=$SERVER_IP
     aggressive=yes
-    ikelifetime=8h
-    keylife=1h
+    ikelifetime=24h
+    keylife=8h
     dpdaction=clear
-    dpddelay=300s
-    dpdtimeout=90s
+    dpddelay=30s
+    dpdtimeout=120s
     forceencaps=yes
+    margintime=9m
+    rekeyfuzz=100%
+    keyingtries=3
+    replay_window=32
 EOF
 
-echo "✓ Created Synology-compatible IPSec configuration"
+echo "✓ Created Synology-compatible IPSec configuration (legacy encryption)"
 echo ""
 
 echo "=== Creating IPSec Secrets ==="
@@ -431,17 +436,19 @@ echo ""
 echo "CRITICAL SYNOLOGY SETTINGS TO CHECK:"
 echo "1. ✅ L2TP/IPSec is enabled"
 echo "2. ✅ Authentication is MS-CHAP v2"
-echo "3. ❌ 'Enable SHA2-256 compatible mode (96 bit)' is DISABLED"
+echo "3. ❌ 'Enable SHA2-256 compatible mode (96 bit)' is DISABLED (for Windows/macOS compatibility)"
 echo ""
 echo "IMMEDIATE ACTIONS:"
-echo "A. Enable SHA2-256 mode on Synology:"
-echo "   - Go to VPN Server > L2TP/IPSec"
-echo "   - Check 'Enable SHA2-256 compatible mode (96 bit)'"
-echo "   - Click Apply"
+echo "A. Since SHA2-256 mode is disabled for client compatibility:"
+echo "   - This configuration uses legacy 3DES/MD5 encryption"
+echo "   - Should work with Windows 11 and macOS clients"
+echo "   - Less secure but more compatible"
 echo ""
-echo "B. Alternative: Use weaker encryption (less secure):"
-echo "   - Keep SHA2-256 mode disabled"
-echo "   - Client must use 3DES-SHA1 or 3DES-MD5"
+echo "B. Verify Synology L2TP/IPSec settings:"
+echo "   - VPN Server > L2TP/IPSec > General"
+echo "   - Enable L2TP/IPSec VPN server: ✅ Checked"
+echo "   - Authentication: MS-CHAP v2"
+echo "   - Enable SHA2-256 compatible mode: ❌ Unchecked (for client compatibility)"
 echo ""
 echo "C. Check Synology firewall:"
 echo "   - Control Panel > Security > Firewall"
@@ -451,7 +458,10 @@ echo "D. Check Synology VPN logs:"
 echo "   - Log Center > VPN Server"
 echo "   - Look for connection attempts and errors"
 echo ""
-echo "MOST LIKELY SOLUTION:"
-echo "Enable 'SHA2-256 compatible mode' on your Synology server!"
+echo "CONFIGURATION NOTES:"
+echo "- Using legacy encryption (3DES/MD5) for maximum compatibility"
+echo "- This should work with Windows 11 and macOS built-in VPN clients"
+echo "- If connection still fails, check Synology logs for specific errors"
+echo "- Consider testing from different network locations"
 echo ""
 echo "=== Synology Debug Script Completed at $(date) ==="
