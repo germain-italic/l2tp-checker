@@ -499,9 +499,50 @@ echo "   - Log Center > VPN Server"
 echo "   - Look for connection attempts and errors"
 echo ""
 echo "CONFIGURATION NOTES:"
-echo "- Using legacy encryption (3DES/MD5) for maximum compatibility"
-echo "- This should work with Windows 11 and macOS built-in VPN clients"
-echo "- If connection still fails, check Synology logs for specific errors"
-echo "- Consider testing from different network locations"
+echo "- Tested multiple encryption combinations including DES-MD5 (weakest)"
+echo "- Tested both aggressive and main mode"
+echo "- Tested NAT-T forced mode"
+echo "- Tested IKEv2 for modern Synology servers"
+echo ""
+echo "RESULTS SUMMARY:"
+if [ -f /tmp/windows11_exact.log ]; then
+    if grep -qi "ESTABLISHED" /tmp/windows11_exact.log; then
+        echo "✅ Windows 11 exact match: SUCCESS"
+    else
+        echo "❌ Windows 11 exact match: FAILED"
+    fi
+fi
+
+if [ -f /tmp/synology_legacy.log ]; then
+    if grep -qi "ESTABLISHED" /tmp/synology_legacy.log; then
+        echo "✅ Legacy DES-MD5: SUCCESS"
+    else
+        echo "❌ Legacy DES-MD5: FAILED"
+    fi
+fi
+
+if [ -f /tmp/synology_natt.log ]; then
+    if grep -qi "ESTABLISHED" /tmp/synology_natt.log; then
+        echo "✅ NAT-T forced: SUCCESS"
+    else
+        echo "❌ NAT-T forced: FAILED"
+    fi
+fi
+
+if [ -f /tmp/synology_ikev2.log ]; then
+    if grep -qi "ESTABLISHED" /tmp/synology_ikev2.log; then
+        echo "✅ IKEv2: SUCCESS"
+    else
+        echo "❌ IKEv2: FAILED"
+    fi
+fi
+
+echo ""
+echo "NEXT STEPS:"
+echo "1. Check which configuration (if any) succeeded above"
+echo "2. If none succeeded, check Synology VPN Server logs"
+echo "3. Verify shared key is exactly correct"
+echo "4. Try connecting from a different network location"
+echo "5. Consider enabling 'SHA2-256 compatible mode' temporarily for testing"
 echo ""
 echo "=== Synology Debug Script Completed at $(date) ==="
