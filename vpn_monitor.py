@@ -511,13 +511,18 @@ lcp-echo-failure 4
     def _test_basic_connectivity(self, ip: str) -> bool:
         """Test basic network connectivity to IP."""
         try:
+            logger.debug(f"Testing basic connectivity to {ip}")
             ping_cmd = ['ping', '-c', '1', '-W', '5', ip]
             ping_result = subprocess.run(ping_cmd, capture_output=True, timeout=10)
             logger.debug(f"Ping to {ip}: {ping_result.returncode}")
             if ping_result.returncode != 0:
-                logger.debug(f"Ping failed: {ping_result.stderr.decode()}")
+                logger.debug(f"Ping stdout: {ping_result.stdout.decode()}")
+                logger.debug(f"Ping stderr: {ping_result.stderr.decode()}")
+            else:
+                logger.debug(f"Ping successful: {ping_result.stdout.decode()}")
             return ping_result.returncode == 0
-        except:
+        except Exception as e:
+            logger.debug(f"Ping exception: {e}")
             return False
 
     def _check_ipsec_status(self) -> bool:
