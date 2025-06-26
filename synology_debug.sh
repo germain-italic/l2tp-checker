@@ -451,7 +451,7 @@ conn windows11_exact
     ike=des-md5-modp768,3des-md5-modp768,des-sha1-modp768!
     esp=des-md5,3des-md5,des-sha1!
     rekey=no
-    leftid="$USERNAME"
+    leftid=%any
     rightid=$SERVER_IP
     aggressive=yes
     ikelifetime=480m
@@ -494,7 +494,7 @@ conn synology_legacy
     ike=des-md5-modp768!
     esp=des-md5!
     rekey=no
-    leftid="$USERNAME"
+    leftid=%any
     rightid=$SERVER_IP
     aggressive=yes
     ikelifetime=480m
