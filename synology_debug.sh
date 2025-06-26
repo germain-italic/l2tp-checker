@@ -202,14 +202,16 @@ conn windows11_match
     leftid=%any
     rightid=%any
     aggressive=no
-    ikelifetime=3600s
+    ikelifetime=86400s
     keylife=3600s
     dpdaction=clear
     dpddelay=30s
     dpdtimeout=120s
-    forceencaps=no
+    forceencaps=yes
     margintime=9m
     rekeyfuzz=100%
+    closeaction=none
+    auto=start
 EOF
 
 echo "✓ Created Synology-compatible IPSec configuration"
@@ -352,7 +354,9 @@ TCPDUMP_PID=$!
 sleep 2
 
 echo "Attempting connection with Synology-compatible parameters..."
-timeout 15 ipsec up windows11_match 2>&1 | tee /tmp/synology_up_output.log
+# Force immediate connection with auto=start
+sleep 3
+ipsec statusall | tee /tmp/synology_up_output.log
 
 
 echo ""

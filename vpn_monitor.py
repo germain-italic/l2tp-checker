@@ -250,14 +250,16 @@ conn vpntest
     leftid=%any
     rightid=%any
     aggressive=no
-    ikelifetime=3600s
+    ikelifetime=86400s
     keylife=3600s
     dpdaction=clear
     dpddelay=30s
     dpdtimeout=120s
-    forceencaps=no
+    forceencaps=yes
     margintime=9m
     rekeyfuzz=100%
+    closeaction=none
+    auto=start
 """
         
         with open(config_file, 'w') as f:
@@ -608,15 +610,18 @@ password {server['password']}
             
             logger.debug(f"Attempting to bring up IPSec connection for {server['name']}")
             
-            # Bring up the connection
-            up_cmd = ['ipsec', 'up', 'vpntest']
-            up_result = subprocess.run(up_cmd, capture_output=True, timeout=25)
-            up_output = up_result.stdout.decode() + " " + up_result.stderr.decode()
+            # Connection should auto-start, just wait and check status
+            time.sleep(3)
             
-            logger.debug(f"IPSec up command output: {up_output}")
+            # Check if auto-started successfully
+            status_cmd = ['ipsec', 'statusall']
+            status_result = subprocess.run(status_cmd, capture_output=True, timeout=5)
+            up_output = status_result.stdout.decode()
+            
+            logger.debug(f"IPSec status output: {up_output}")
             
             # Wait for connection establishment with more frequent checks
-            max_wait = 15
+            max_wait = 10
             wait_time = 0
             connection_established = False
             
@@ -626,7 +631,7 @@ password {server['password']}
                     connection_established = True
                     break
                 time.sleep(0.5)
-                wait_time += 1
+                wait_time += 0.5
             
             if not connection_established:
                 connection_time = int((time.time() - start_time) * 1000)
