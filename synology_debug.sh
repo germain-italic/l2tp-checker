@@ -7,6 +7,43 @@ set -e
 echo "=== Synology DSM7 VPN Debug Script Started at $(date) ==="
 echo ""
 
+echo "=== Container Environment Check ==="
+echo "Checking container capabilities and privileges..."
+
+# Check if running in privileged mode
+if [ -r /proc/1/status ]; then
+    CAP_INFO=$(grep "^Cap" /proc/1/status 2>/dev/null || echo "Capability info not available")
+    echo "Container capabilities: $CAP_INFO"
+else
+    echo "Cannot read process capabilities"
+fi
+
+# Check if we can create network interfaces (required for VPN)
+if [ -w /proc/sys/net ]; then
+    echo "✓ Network configuration access: Available"
+else
+    echo "❌ Network configuration access: Denied (may need --privileged)"
+fi
+
+# Check if we can load kernel modules
+if [ -w /proc/sys/kernel ]; then
+    echo "✓ Kernel parameter access: Available"
+else
+    echo "❌ Kernel parameter access: Limited"
+fi
+
+# Check available network namespaces
+echo "Network namespace: $(readlink /proc/self/ns/net 2>/dev/null || echo 'Cannot read')"
+
+# Check if TUN/TAP is available
+if [ -c /dev/net/tun ]; then
+    echo "✓ TUN/TAP device: Available"
+else
+    echo "❌ TUN/TAP device: Not available (may affect VPN functionality)"
+fi
+
+echo ""
+
 # Get server info from environment
 SERVER_INFO=$(python3 -c "
 import os
@@ -104,13 +141,75 @@ chmod 600 /etc/ipsec.secrets
 echo ""
 
 echo "=== Starting strongSwan for Synology ==="
-ipsec start
-sleep 5
+echo "Attempting to start strongSwan daemon..."
+
+# Method 1: Try direct charon startup
+echo "1. Trying direct charon startup..."
+charon --use-syslog --debug-ike 1 --debug-knl 1 &
+CHARON_PID=$!
+sleep 3
+
+# Check if charon is running
+if kill -0 $CHARON_PID 2>/dev/null; then
+    echo "✓ Charon started successfully (PID: $CHARON_PID)"
+else
+    echo "✗ Charon failed to start, trying alternative method..."
+    
+    # Method 2: Try traditional ipsec start with timeout
+    echo "2. Trying traditional ipsec start..."
+    timeout 10 ipsec start || echo "ipsec start timed out or failed"
+    sleep 3
+fi
+
+# Verify strongSwan is running
+echo "Checking strongSwan status..."
+if pgrep charon >/dev/null; then
+    echo "✓ strongSwan daemon is running"
+else
+    echo "✗ strongSwan daemon not running - attempting manual start..."
+    
+    # Method 3: Force start with specific parameters
+    echo "3. Force starting with specific parameters..."
+    /usr/lib/ipsec/starter --daemon charon --debug 2 &
+    sleep 5
+    
+    if pgrep charon >/dev/null; then
+        echo "✓ strongSwan force-started successfully"
+    else
+        echo "❌ Failed to start strongSwan - container may need privileged mode"
+        echo "   Try running: docker-compose run --privileged vpn-monitor /app/synology_debug.sh"
+        exit 1
+    fi
+fi
 echo ""
 
 echo "=== Loading Synology Configuration ==="
-ipsec reload
-sleep 3
+echo "Attempting to load configuration..."
+
+# Try reload first
+if ipsec reload 2>/dev/null; then
+    echo "✓ Configuration reloaded successfully"
+else
+    echo "✗ Reload failed, trying alternative loading method..."
+    
+    # Alternative: restart with new config
+    echo "Restarting strongSwan with new configuration..."
+    ipsec stop 2>/dev/null || true
+    sleep 2
+    
+    # Start again
+    charon --use-syslog --debug-ike 1 --debug-knl 1 &
+    sleep 3
+    
+    if pgrep charon >/dev/null; then
+        echo "✓ strongSwan restarted with new configuration"
+    else
+        echo "❌ Failed to restart strongSwan"
+        exit 1
+    fi
+fi
+
+sleep 2
 echo ""
 
 echo "=== Checking Configuration ==="
