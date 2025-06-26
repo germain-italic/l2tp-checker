@@ -60,7 +60,12 @@ if [ "$USE_VENV" = true ]; then
     # Check if python3-venv is available
     if ! python3 -m venv --help &> /dev/null; then
         echo "❌ python3-venv is required but not available"
-        echo "Please install it with: sudo apt install python3-venv"
+        echo ""
+        echo "To fix this, run one of these commands:"
+        echo "  sudo apt install python3-venv"
+        echo "  sudo apt install python3.12-venv"
+        echo ""
+        echo "Then run this setup script again: ./setup.sh"
         exit 1
     fi
     
