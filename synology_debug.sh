@@ -157,15 +157,15 @@ echo ""
 
 echo "=== Creating Synology-Compatible IPSec Configuration ==="
 
-# Create Synology-optimized configuration for servers WITHOUT SHA2-256 mode
+# Create configuration that exactly matches Windows 11 L2TP/IPSec client
+# Based on successful Windows 11 connection parameters
 cat > /etc/ipsec.conf << EOF
 config setup
-    charondebug="ike 2, knl 1, cfg 1"
+    charondebug="ike 2, knl 1, cfg 1, net 1, asn 1, enc 1, lib 1, esp 1"
     strictcrlpolicy=no
     uniqueids=no
-    cachecrls=no
 
-conn synology
+conn windows_compat
     type=transport
     keyexchange=ikev1
     left=%defaultroute
@@ -174,25 +174,20 @@ conn synology
     rightprotoport=17/1701
     authby=psk
     auto=add
-    ike=3des-sha1-modp1024,3des-md5-modp1024,aes128-sha1-modp1024,aes128-md5-modp1024!
-    esp=3des-sha1,3des-md5,aes128-sha1,aes128-md5!
+    ike=aes256-sha1-modp1024,aes128-sha1-modp1024,3des-sha1-modp1024!
+    esp=aes256-sha1,aes128-sha1,3des-sha1!
     rekey=no
-    leftid=%any
-    rightid=$SERVER_IP
+    leftid=
+    rightid=
     aggressive=yes
-    ikelifetime=24h
-    keylife=8h
-    dpdaction=clear
-    dpddelay=30s
-    dpdtimeout=120s
-    forceencaps=yes
-    margintime=9m
-    rekeyfuzz=100%
-    keyingtries=3
-    replay_window=32
+    ikelifetime=8h
+    keylife=1h
+    dpdaction=none
+    forceencaps=no
+    nat_traversal=yes
 EOF
 
-echo "✓ Created Synology-compatible IPSec configuration (legacy encryption)"
+echo "✓ Created Windows 11 compatible IPSec configuration"
 echo ""
 
 echo "=== Creating IPSec Secrets ==="
@@ -328,7 +323,7 @@ TCPDUMP_PID=$!
 sleep 2
 
 echo "Attempting connection with Synology-compatible parameters..."
-timeout 25 ipsec up synology 2>&1 | tee /tmp/synology_up_output.log
+timeout 25 ipsec up windows_compat 2>&1 | tee /tmp/synology_up_output.log
 
 sleep 5
 
@@ -400,7 +395,7 @@ config setup
     strictcrlpolicy=no
     uniqueids=no
 
-conn synology_weak
+conn test_3des_only
     type=transport
     keyexchange=ikev1
     left=%defaultroute
@@ -412,21 +407,19 @@ conn synology_weak
     ike=3des-md5-modp1024!
     esp=3des-md5!
     rekey=no
-    leftid=%any
-    rightid=$SERVER_IP
+    leftid=
+    rightid=
     aggressive=yes
-    ikelifetime=8h
-    keylife=1h
-    dpdaction=clear
-    dpddelay=300s
-    dpdtimeout=90s
-    forceencaps=yes
+    ikelifetime=24h
+    keylife=8h
+    dpdaction=none
+    forceencaps=no
 EOF
 
 ipsec reload
 sleep 2
 echo "Trying weakest encryption (3DES-MD5)..."
-timeout 15 ipsec up synology_weak 2>&1 | head -10
+timeout 15 ipsec up test_3des_only 2>&1 | head -10
 
 echo ""
 echo "2. Testing without aggressive mode:"
@@ -436,7 +429,7 @@ config setup
     strictcrlpolicy=no
     uniqueids=no
 
-conn synology_main
+conn test_main_mode
     type=transport
     keyexchange=ikev1
     left=%defaultroute
@@ -445,24 +438,22 @@ conn synology_main
     rightprotoport=17/1701
     authby=psk
     auto=add
-    ike=3des-sha1-modp1024,aes128-sha1-modp1024!
-    esp=3des-sha1,aes128-sha1!
+    ike=aes256-sha1-modp1024,aes128-sha1-modp1024,3des-sha1-modp1024!
+    esp=aes256-sha1,aes128-sha1,3des-sha1!
     rekey=no
-    leftid=%any
-    rightid=$SERVER_IP
+    leftid=
+    rightid=
     aggressive=no
     ikelifetime=8h
     keylife=1h
-    dpdaction=clear
-    dpddelay=300s
-    dpdtimeout=90s
-    forceencaps=yes
+    dpdaction=none
+    forceencaps=no
 EOF
 
 ipsec reload
 sleep 2
 echo "Trying main mode (non-aggressive)..."
-timeout 15 ipsec up synology_main 2>&1 | head -10
+timeout 15 ipsec up test_main_mode 2>&1 | head -10
 
 echo ""
 echo "=== Cleanup ==="
