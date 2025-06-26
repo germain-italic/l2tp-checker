@@ -225,7 +225,7 @@ class VPNMonitor:
         config_file = '/etc/ipsec.conf'
         secrets_file = '/etc/ipsec.secrets'
         
-        # Clean IPSec configuration - remove duplicate sections
+        # IPSec configuration optimized for Synology DSM7 compatibility
         config_content = f"""
 config setup
     charondebug="ike 2, knl 1, cfg 1, net 1, asn 1, enc 1, lib 1, esp 1, tls 1, tnc 1, imc 1, imv 1, pts 1"
@@ -241,8 +241,8 @@ conn vpntest
     rightprotoport=17/1701
     authby=psk
     auto=add
-    ike=aes256-sha1-modp1024,aes128-sha1-modp1024,3des-sha1-modp1024,aes256-sha256-modp1024,aes128-sha256-modp1024!
-    esp=aes256-sha1,aes128-sha1,3des-sha1,aes256-sha256,aes128-sha256!
+    ike=3des-sha1-modp1024,aes128-sha1-modp1024,aes256-sha1-modp1024!
+    esp=3des-sha1,aes128-sha1,aes256-sha1!
     rekey=no
     leftid=%any
     rightid={server['ip']}
@@ -252,7 +252,7 @@ conn vpntest
     dpdaction=clear
     dpddelay=300s
     dpdtimeout=90s
-    forceencaps=no
+    forceencaps=yes
 """
         
         with open(config_file, 'w') as f:
