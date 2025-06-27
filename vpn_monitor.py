@@ -528,8 +528,8 @@ password {server['password']}
                 output = status_result.stdout.decode()
                 logger.debug(f"Configuration status output: {output[:300]}...")
                 
-                # Look for our connection in the output (like debug script checks)
-                if 'vpntest:' in output or 'vpntest ' in output:
+                # Look for our connection in the output - format is "vpntest[number]:"
+                if 'vpntest[' in output or 'vpntest:' in output or 'vpntest ' in output:
                     logger.debug("Configuration 'vpntest' found in status")
                     return True
                 else:
