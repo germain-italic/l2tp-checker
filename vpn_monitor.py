@@ -65,6 +65,11 @@ class VPNMonitor:
         self.monitor_id = os.getenv('MONITOR_ID', '')
         self.poll_interval = int(os.getenv('POLL_INTERVAL_MINUTES', 5))
         
+        # WSL2 VPN bypass configuration
+        self.wsl2_bypass = os.getenv('WSL2_BYPASS_VPN', 'false').lower() == 'true'
+        self.physical_gateway = os.getenv('PHYSICAL_GATEWAY', '192.168.100.1')
+        self.physical_interface = os.getenv('PHYSICAL_INTERFACE', 'eth0')
+        
         # Parse VPN servers
         self.vpn_servers = self._parse_vpn_servers()
         
@@ -74,8 +79,84 @@ class VPNMonitor:
         # Validate configuration
         self._validate_config()
         
+        # Setup WSL2 VPN bypass if enabled
+        if self.wsl2_bypass:
+            self._setup_wsl2_bypass()
+        
         # VPN configuration directories
         self.temp_dir = tempfile.mkdtemp(prefix="vpn_test_")
+
+    def _setup_wsl2_bypass(self):
+        """Setup routing to bypass Windows VPN for specific destinations."""
+        try:
+            logger.info("🔄 Setting up WSL2 VPN bypass routing...")
+            
+            # Check if we're in WSL2
+            if not self._is_wsl2():
+                logger.info("Not running in WSL2, skipping VPN bypass setup")
+                return
+            
+            # Add routes for VPN servers through physical gateway
+            for server in self.vpn_servers:
+                self._add_direct_route(server['ip'])
+            
+            # Add routes for public IP services through physical gateway
+            ip_services = ['8.8.8.8', '1.1.1.1', 'api.ipify.org', 'icanhazip.com', 'ipecho.net']
+            for service in ip_services:
+                if not service.replace('.', '').isdigit():
+                    # Resolve hostname first
+                    try:
+                        import socket
+                        ip = socket.gethostbyname(service)
+                        self._add_direct_route(ip)
+                        logger.debug(f"Added route for {service} -> {ip}")
+                    except:
+                        logger.debug(f"Could not resolve {service}")
+                else:
+                    self._add_direct_route(service)
+            
+            logger.info("✅ WSL2 VPN bypass routes configured")
+            
+        except Exception as e:
+            logger.warning(f"WSL2 VPN bypass setup failed: {e}")
+    
+    def _is_wsl2(self) -> bool:
+        """Check if running in WSL2."""
+        try:
+            with open('/proc/version', 'r') as f:
+                version = f.read()
+                return 'microsoft' in version.lower() and 'wsl2' in version.lower()
+        except:
+            return False
+    
+    def _add_direct_route(self, destination: str):
+        """Add a direct route through physical gateway."""
+        try:
+            # Add route through physical gateway, bypassing VPN
+            route_cmd = [
+                'ip', 'route', 'add', destination,
+                'via', self.physical_gateway,
+                'dev', self.physical_interface,
+                'metric', '1'
+            ]
+            
+            # Check if route already exists
+            check_cmd = ['ip', 'route', 'show', destination]
+            check_result = subprocess.run(check_cmd, capture_output=True, timeout=5)
+            
+            if check_result.returncode == 0 and self.physical_gateway in check_result.stdout.decode():
+                logger.debug(f"Route for {destination} already exists")
+                return
+            
+            # Add the route
+            route_result = subprocess.run(route_cmd, capture_output=True, timeout=5)
+            if route_result.returncode == 0:
+                logger.debug(f"Added direct route: {destination} via {self.physical_gateway}")
+            else:
+                logger.debug(f"Failed to add route for {destination}: {route_result.stderr.decode()}")
+                
+        except Exception as e:
+            logger.debug(f"Route add error for {destination}: {e}")
 
     def __del__(self):
         """Cleanup temporary files."""

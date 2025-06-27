@@ -1,17 +1,5 @@
 version: '3.8'
 
-networks:
-  vpn-bypass:
-    driver: bridge
-    driver_opts:
-      com.docker.network.bridge.name: vpn-bypass
-      com.docker.network.driver.mtu: 1500
-    ipam:
-      driver: default
-      config:
-        - subnet: 172.30.0.0/16
-          gateway: 172.30.0.1
-
 services:
   vpn-monitor:
     build: .
@@ -30,20 +18,17 @@ services:
       - vpn-logs:/var/log/vpn-monitor
       - /lib/modules:/lib/modules:ro
     
-    # Use custom bridge network (better for WSL2)
-    networks:
-      vpn-bypass:
-        ipv4_address: 172.30.0.10
-    
-    # DNS configuration to ensure proper resolution
-    dns:
-      - 8.8.8.8
-      - 1.1.1.1
+    # Use host networking (required for WSL2 VPN bypass)
+    network_mode: host
     
     # Environment variables (can be overridden by .env file)
     environment:
       - PYTHONUNBUFFERED=1
       - DEBIAN_FRONTEND=noninteractive
+      # WSL2 VPN bypass configuration
+      - WSL2_BYPASS_VPN=true
+      - PHYSICAL_GATEWAY=192.168.100.1
+      - PHYSICAL_INTERFACE=eth0
     
     # Health check
     healthcheck:
