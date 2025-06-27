@@ -385,6 +385,57 @@ password {server['password']}
             return False
 
     def _load_ipsec_config(self) -> bool:
+    def _ensure_clean_strongswan_state(self):
+        """Ensure strongSwan is in a clean state before starting."""
+        try:
+            # Kill any existing processes
+            processes_to_kill = ['charon', 'starter', 'ipsec']
+            for process in processes_to_kill:
+                subprocess.run(['killall', '-9', process], capture_output=True, timeout=3)
+            
+            # Remove PID and control files
+            files_to_remove = [
+                '/var/run/charon.pid',
+                '/var/run/starter.charon.pid', 
+                '/var/run/starter.pid',
+                '/var/run/charon.ctl',
+                '/var/run/charon.vici'
+            ]
+            
+            for file_path in files_to_remove:
+                if os.path.exists(file_path):
+                    os.remove(file_path)
+                    logger.debug(f"Removed {file_path}")
+            
+            # Wait for cleanup
+            time.sleep(1)
+            
+        except Exception as e:
+            logger.debug(f"Cleanup warning: {e}")
+    
+    def _verify_charon_running(self) -> bool:
+        """Verify that charon daemon is running and responding."""
+        try:
+            # Check if charon process exists
+            pgrep_result = subprocess.run(['pgrep', 'charon'], capture_output=True, timeout=5)
+            if pgrep_result.returncode != 0:
+                logger.debug("Charon process not found")
+                return False
+            
+            # Try to get status via ipsec command
+            status_result = subprocess.run(['ipsec', 'status'], capture_output=True, timeout=5)
+            if status_result.returncode == 0:
+                logger.debug("Charon responding to status requests")
+                return True
+            else:
+                logger.debug(f"Charon not responding: {status_result.stderr.decode()}")
+                return False
+                
+        except Exception as e:
+            logger.debug(f"Charon verification failed: {e}")
+            return False
+
+    def _load_ipsec_config(self) -> bool:
         """Load IPSec configuration."""
         try:
             logger.debug("Loading IPSec configuration")
