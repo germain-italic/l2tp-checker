@@ -258,8 +258,8 @@ conn vpntest
         
         # Create secrets file - EXACT same format as debug script
         secrets_content = f"""# strongSwan IPsec secrets file
-%any {server['ip']} : PSK \"{server['shared_key']}\"
-{server['ip']} %any : PSK \"{server['shared_key']}\"
+%any {server['ip']} : PSK "{server['shared_key']}"
+{server['ip']} %any : PSK "{server['shared_key']}"
 """
         with open(secrets_file, 'w') as f:
             f.write(secrets_content)
