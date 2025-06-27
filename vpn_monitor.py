@@ -227,13 +227,12 @@ class VPNMonitor:
         
         # IPSec configuration for Synology DSM7 - FIXED peer ID issue
         # Based on server logs showing "no suitable connection for peer '@germain'"
-        # CRITICAL FIX: Use exact same config as working debug script
+        # CRITICAL FIX: Use Main Mode (not Aggressive) to match working debug script
         config_content = f"""
 config setup
     charondebug="ike 2, knl 1, cfg 1"
     strictcrlpolicy=no
     uniqueids=no
-    nat_traversal=yes
 
 conn vpntest
     type=transport
@@ -248,14 +247,15 @@ conn vpntest
     esp=aes256-sha1,3des-sha1!
     rekey=no
     leftid=%any
-    rightid={server['ip']}
-    aggressive=yes
-    ikelifetime=28800s
+    rightid=%any
+    aggressive=no
+    ikelifetime=86400s
     keylife=3600s
-    dpdaction=clear
-    dpddelay=300s
-    dpdtimeout=90s
-    forceencaps=no
+    dpdaction=none
+    forceencaps=yes
+    margintime=9m
+    rekeyfuzz=100%
+    closeaction=none
 """
         
         with open(config_file, 'w') as f:
