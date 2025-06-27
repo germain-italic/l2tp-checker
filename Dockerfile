@@ -51,15 +51,13 @@ COPY .env.dist /app/
 
 # Copy shell scripts (change less frequently than Python code)
 COPY run_monitor.sh /app/
-COPY vpn_debug.sh /app/
 COPY synology_debug.sh /app/
-COPY test_server.sh /app/
 
 # Copy main Python application (changes most frequently - do this last)
 COPY vpn_monitor.py /app/
 
 # Make all scripts executable in a single layer
-RUN chmod +x /app/run_monitor.sh /app/vpn_monitor.py /app/vpn_debug.sh /app/synology_debug.sh /app/test_server.sh
+RUN chmod +x /app/run_monitor.sh /app/vpn_monitor.py /app/synology_debug.sh
 
 # Default command
 CMD ["/app/run_monitor.sh"]
