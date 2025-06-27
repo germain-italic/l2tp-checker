@@ -1,5 +1,16 @@
 version: '3.8'
 
+networks:
+  vpn-bridge:
+    driver: macvlan
+    driver_opts:
+      parent: eth0
+    ipam:
+      config:
+        - subnet: 172.25.128.0/20
+          gateway: 172.25.128.1
+          ip_range: 172.25.140.0/24
+
 services:
   vpn-monitor:
     build: .
@@ -17,6 +28,10 @@ services:
       - ./.env:/app/.env:ro
       - vpn-logs:/var/log/vpn-monitor
       - /lib/modules:/lib/modules:ro
+    
+    # Use macvlan network for direct network access (like VirtualBox bridge mode)
+    networks:
+      - vpn-bridge
     
     # Environment variables (can be overridden by .env file)
     environment:
