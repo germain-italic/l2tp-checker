@@ -225,16 +225,14 @@ class VPNMonitor:
         config_file = '/etc/ipsec.conf'
         secrets_file = '/etc/ipsec.secrets'
         
-        # IPSec configuration for Synology DSM7 - FIXED peer ID issue
-        # Based on server logs showing "no suitable connection for peer '@germain'"
-        # COPY EXACT WORKING CONFIG FROM synology_debug.sh
+        # COPY EXACT WORKING CONFIG FROM synology_debug.sh - Main Mode with auto=start
         config_content = f"""
 config setup
     charondebug="ike 2, knl 1, cfg 1"
     strictcrlpolicy=no
     uniqueids=no
 
-conn windows11_match
+conn vpntest
     type=transport
     keyexchange=ikev1
     left=%defaultroute
@@ -242,43 +240,34 @@ conn windows11_match
     right={server['ip']}
     rightprotoport=17/1701
     authby=psk
-    auto=start
-    ike=aes256-sha1-modp2048,aes256-sha1-modp1024,3des-sha1-modp1024!
-    esp=aes256-sha1,3des-sha1!
+    auto=add
+    ike=3des-sha1-modp1024,aes256-sha1-modp1024,aes128-sha1-modp1024!
+    esp=3des-sha1,aes256-sha1,aes128-sha1!
     rekey=no
     leftid=%any
-    rightid=%any
-    aggressive=no
-    ikelifetime=86400s
+    rightid={server['ip']}
+    aggressive=yes
+    ikelifetime=28800s
     keylife=3600s
-    dpdaction=none
-    forceencaps=yes
-    margintime=9m
-    rekeyfuzz=100%
-    closeaction=none
+    dpdaction=clear
+    dpddelay=300s
+    dpdtimeout=90s
+    forceencaps=no
 """
         
         with open(config_file, 'w') as f:
             f.write(config_content)
         
-        # Create secrets file with proper format - FIXED peer ID
-        # Use %any for flexible peer ID matching
+        # Create secrets file - EXACT same format as debug script
         secrets_content = f"""# strongSwan IPsec secrets file
-# Fixed peer ID to match Windows 11 behavior
 %any {server['ip']} : PSK "{server['shared_key']}"
 {server['ip']} %any : PSK "{server['shared_key']}"
-
-# Debug: Server details
-# Server: {server['name']}
-# IP: {server['ip']}
-# Username: {server['username']}
-# Shared key length: {len(server['shared_key'])} characters
 """
         with open(secrets_file, 'w') as f:
             f.write(secrets_content)
         os.chmod(secrets_file, 0o600)
         
-        logger.debug(f"Created IPSec config with leftid=%any for {server['ip']}")
+        logger.debug(f"Created IPSec config for {server['ip']}")
         
         return config_file
 
@@ -530,7 +519,7 @@ password {server['password']}
         """Verify that the VPN configuration was loaded successfully."""
         try:
             # Check if our connection 'vpntest' is loaded
-            status_cmd = ['ipsec', 'statusall']
+            status_cmd = ['ipsec', 'status']
             status_result = subprocess.run(status_cmd, capture_output=True, timeout=5)
             
             if status_result.returncode == 0:
@@ -601,58 +590,109 @@ password {server['password']}
                 connection_time = int((time.time() - start_time) * 1000)
                 return False, connection_time, "Failed to load IPSec configuration"
             
-            # COPY EXACT WORKING APPROACH: auto=start means connection starts automatically
-            logger.debug(f"Using auto=start - connection should establish automatically for {server['name']}")
+            # COPY EXACT WORKING APPROACH: manual ipsec up like debug script
+            logger.debug(f"Attempting to bring up IPSec connection for {server['name']}")
             
-            # Wait for auto-start to work (like debug script does)
+            # Wait for configuration to be fully loaded
             time.sleep(3)
             
-            # Check status (like debug script does)
+            # Start packet capture like debug script
+            logger.debug("Starting packet capture...")
+            tcpdump_cmd = ['timeout', '30', 'tcpdump', '-i', 'any', '-n', 'host', server['ip'], 
+                          'and', 'port', '500', '-w', '/tmp/vpn_debug.pcap']
+            tcpdump_process = subprocess.Popen(tcpdump_cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+            
+            # Wait for tcpdump to start
+            time.sleep(2)
+            
+            # Bring up the connection - EXACT same as debug script
+            up_cmd = ['ipsec', 'up', 'vpntest']
+            up_result = subprocess.run(up_cmd, capture_output=True, timeout=25)
+            up_output = up_result.stdout.decode() + " " + up_result.stderr.decode()
+            
+            logger.debug(f"IPSec up command output: {up_output}")
+            
+            # Wait for connection establishment
+            time.sleep(5)
+            
+            # Check status - EXACT same as debug script
             status_cmd = ['ipsec', 'statusall']
             status_result = subprocess.run(status_cmd, capture_output=True, timeout=5)
             status_output = status_result.stdout.decode() if status_result.returncode == 0 else "No status available"
             
-            logger.debug(f"IPSec status output: {status_output}")
+            # Stop tcpdump
+            try:
+                tcpdump_process.terminate()
+                tcpdump_process.wait(timeout=5)
+            except:
+                pass
             
-            # Check if IPSec established
-            if "ESTABLISHED" in status_output and "SYNO: IPSEC success" in status_output:
-                logger.debug(f"IPSec established via auto=start, starting L2TP for {server['name']}")
+            # Check if connection was established - EXACT same logic as debug script
+            if "ESTABLISHED" in up_output or "ESTABLISHED" in status_output:
+                logger.debug(f"IPSec established, starting L2TP for {server['name']}")
                 
                 # Start xl2tpd
                 xl2tpd_cmd = ['xl2tpd', '-c', '/etc/xl2tpd/xl2tpd.conf', '-C', '/var/run/xl2tpd/l2tp-control']
                 xl2tpd_process = subprocess.Popen(xl2tpd_cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
                 
-                # Wait for xl2tpd to start
+                # Wait for xl2tpd to start properly
                 time.sleep(3)
                 
-                # Send L2TP connect command
+                # Attempt L2TP connection
                 try:
+                    # Check if control file exists
+                    if not os.path.exists('/var/run/xl2tpd/l2tp-control'):
+                        time.sleep(2)  # Wait a bit more
+                    
                     if os.path.exists('/var/run/xl2tpd/l2tp-control'):
-                        connect_cmd = 'echo "c windows11_match" > /var/run/xl2tpd/l2tp-control'
-                        control_result = subprocess.run(connect_cmd, shell=True, capture_output=True, timeout=5)
+                        # Send connect command via echo to control socket
+                        connect_cmd = 'echo "c vpntest" > /var/run/xl2tpd/l2tp-control'
+                        control_result = subprocess.run(connect_cmd, shell=True, capture_output=True, timeout=10)
                         logger.debug(f"L2TP connect command result: {control_result.returncode}")
-                    
-                    # Wait for L2TP connection
-                    time.sleep(10)
-                    connection_time = int((time.time() - start_time) * 1000)
-                    
-                    if self._verify_vpn_connection():
-                        return True, connection_time, None
                     else:
-                        return False, connection_time, "VPN tunnel establishment failed. IPSec up but L2TP not working"
-                            
+                        logger.debug("L2TP control file not found")
+                    
+                    # Wait for connection establishment
+                    time.sleep(10)
+                    
                 except Exception as e:
                     logger.debug(f"L2TP connection attempt failed: {e}")
-                    connection_time = int((time.time() - start_time) * 1000)
-                    return False, connection_time, f"L2TP setup failed: {e}"
+                
+                # Check if connection was established
+                connection_time = int((time.time() - start_time) * 1000)
+                
+                # Verify connection by checking interfaces or routes
+                if self._verify_vpn_connection():
+                    return True, connection_time, None
+                else:
+                    # Get more detailed error information
+                    status_cmd = ['ipsec', 'statusall']
+                    status_result = subprocess.run(status_cmd, capture_output=True, timeout=5)
+                    status_info = status_result.stdout.decode() if status_result.returncode == 0 else "No status available"
+                    
+                    # Check xl2tpd process
+                    xl2tpd_status = "xl2tpd not running"
+                    try:
+                        xl2tpd_check = subprocess.run(['pgrep', 'xl2tpd'], capture_output=True, timeout=5)
+                        if xl2tpd_check.returncode == 0:
+                            xl2tpd_status = "xl2tpd running"
+                    except:
+                        pass
+                    
+                    return False, connection_time, f"VPN tunnel establishment failed. IPSec status: {status_info}. L2TP status: {xl2tpd_status}"
             
             else:
                 connection_time = int((time.time() - start_time) * 1000)
                 
-                # Check for specific error patterns
-                error_details = self._analyze_ipsec_error(status_output, status_output)
+                # Get detailed status for debugging
+                status_cmd = ['ipsec', 'statusall']
+                status_result = subprocess.run(status_cmd, capture_output=True, timeout=5)
+                status_info = status_result.stdout.decode() if status_result.returncode == 0 else "No status available"
                 
-                return False, connection_time, f"IPSec auto-start failed after 15s. {error_details}"
+                # Check for specific error patterns
+                error_details = self._analyze_ipsec_error(up_output, status_info)
+                
+                return False, connection_time, f"IPSec tunnel not established after 20s. {error_details}"
                 
         except subprocess.TimeoutExpired:
             connection_time = int((time.time() - start_time) * 1000)
