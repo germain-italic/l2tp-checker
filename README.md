@@ -198,10 +198,47 @@ The container can be deployed in orchestration platforms with appropriate schedu
 SELECT * FROM vpn_monitoring_summary;
 ```
 
+```
++-----------------+----------------+-------------+------------------+----------------------+------------------------+---------------------+-----------------+
+| vpn_server_name | vpn_server_ip  | total_tests | successful_tests | success_rate_percent | avg_connection_time_ms | last_test_time      | unique_monitors |
++-----------------+----------------+-------------+------------------+----------------------+------------------------+---------------------+-----------------+
+| myvpn02         | vpn2.hostname  |          27 |                1 |                 3.70 |               491.0000 | 2025-06-26 21:37:29 |               2 |
+| myvpn01         | vpn1.hostname  |         183 |                6 |                 3.28 |             20547.6667 | 2025-06-27 00:51:44 |               3 |
++-----------------+----------------+-------------+------------------+----------------------+------------------------+---------------------+-----------------+
+```
+
 ### Recent Failures
 ```sql
 SELECT * FROM recent_failures;
 ```
+
+```
++---------------------+-----------------------+-----------------+----------------+----------------------------------------------------+-------------------+
+| test_timestamp      | computer_identifier   | vpn_server_name | vpn_server_ip  | error_message_short                                | public_ip_address |
++---------------------+-----------------------+-----------------+----------------+----------------------------------------------------+-------------------+
+| 2025-06-27 00:50:20 | germain-debian12-wsl2 | myvpn01         | vpn1.hostname  | Failed to load IPSec configuration                 | 54.112.218.172    |
+| 2025-06-27 00:47:45 | germain-debian12-wsl2 | myvpn01         | vpn1.hostname  | Failed to load IPSec configuration                 | 54.112.218.172    |
+| 2025-06-27 00:46:35 | germain-debian12-wsl2 | myvpn01         | vpn1.hostname  | Connection failed. Technical details: No status... | 54.112.218.172    |
+| 2025-06-27 00:44:08 | germain-debian12-wsl2 | myvpn01         | vpn1.hostname  | Failed to load IPSec configuration                 | 54.112.218.172    |
+| 2025-06-27 00:42:27 | germain-debian12-wsl2 | myvpn01         | vpn1.hostname  | Failed to load IPSec configuration                 | 54.112.218.172    |
+| 2025-06-27 00:40:09 | germain-debian12-wsl2 | myvpn01         | vpn1.hostname  | Failed to load IPSec configuration                 | 54.112.218.172    |
+| 2025-06-27 00:38:46 | germain-debian12-wsl2 | myvpn01         | vpn1.hostname  | Failed to start strongSwan daemon                  | 54.112.218.172    |
+| 2025-06-27 00:37:05 | germain-debian12-wsl2 | myvpn01         | vpn1.hostname  | Failed to load IPSec configuration                 | 54.112.218.172    |
+| 2025-06-27 00:34:13 | germain-debian12-wsl2 | myvpn01         | vpn1.hostname  | Failed to load IPSec configuration                 | 54.112.218.172    |
+| 2025-06-27 00:30:52 | germain-debian12-wsl2 | myvpn01         | vpn1.hostname  | Cannot reach VPN server vpn1.hostname              | 54.112.218.172    |
+| 2025-06-27 00:26:13 | germain-debian12-wsl2 | myvpn01         | vpn1.hostname  | Failed to load IPSec configuration                 | 54.112.218.172    |
+| 2025-06-27 00:25:26 | germain-debian12-wsl2 | myvpn01         | vpn1.hostname  | Failed to load IPSec configuration                 | 54.112.218.172    |
+| 2025-06-27 00:22:59 | germain-debian12-wsl2 | myvpn01         | vpn1.hostname  | Failed to load IPSec configuration                 | 54.112.218.172    |
+| 2025-06-27 00:20:45 | germain-debian12-wsl2 | myvpn01         | vpn1.hostname  | VPN connection timeout                             | 54.112.218.172    |
+| 2025-06-27 00:18:23 | germain-debian12-wsl2 | myvpn01         | vpn1.hostname  | IPSec auto-start failed after 15s. Connection f... | 54.112.218.172    |
+| 2025-06-27 00:16:06 | germain-debian12-wsl2 | myvpn01         | vpn1.hostname  | VPN tunnel establishment failed. IPSec status: ... | 54.112.218.172    |
+| 2025-06-27 00:13:25 | germain-debian12-wsl2 | myvpn01         | vpn1.hostname  | IPSec tunnel not established after 20s. Server ... | 54.112.218.172    |
+| 2025-06-27 00:08:55 | germain-debian12-wsl2 | myvpn01         | vpn1.hostname  | VPN tunnel establishment failed. IPSec status: ... | 54.112.218.172    |
+| 2025-06-27 00:06:55 | germain-debian12-wsl2 | myvpn01         | vpn1.hostname  | VPN tunnel establishment failed. IPSec status: ... | 54.112.218.172    |
+| 2025-06-27 00:05:53 | germain-debian12-wsl2 | myvpn01         | vpn1.hostname  | IPSec tunnel not established after 15s. Error: ... | 54.112.218.172    |
++---------------------+-----------------------+-----------------+----------------+----------------------------------------------------+-------------------+
+```
+
 
 ### Monitor Health Check
 ```sql
@@ -218,6 +255,16 @@ SELECT
     END as health_status
 FROM monitor_instances
 ORDER BY last_seen DESC;
+```
+
+```
++-----------------------+-----------------+------------------------------------------+---------------------+-----------------+---------------+
+| computer_identifier   | system_username | operating_system                         | last_seen           | total_tests_run | health_status |
++-----------------------+-----------------+------------------------------------------+---------------------+-----------------+---------------+
+| germain-debian12-wsl2 | germain         | Linux 5.15.167.4-microsoft-standard-WSL2 | 2025-06-27 00:51:44 |             106 | WARNING       |
+| germain-debian12-wsl2 | root            | Linux 5.15.167.4-microsoft-standard-WSL2 | 2025-06-26 21:56:05 |             102 | CRITICAL      |
+| germain-linuxlite7.4  | germain         | Linux 6.8.0-62-generic                   | 2025-06-26 20:23:41 |               2 | CRITICAL      |
++-----------------------+-----------------+------------------------------------------+---------------------+-----------------+---------------+
 ```
 
 ## Troubleshooting
