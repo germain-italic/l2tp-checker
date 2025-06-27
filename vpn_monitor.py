@@ -227,13 +227,13 @@ class VPNMonitor:
         
         # IPSec configuration for Synology DSM7 - FIXED peer ID issue
         # Based on server logs showing "no suitable connection for peer '@germain'"
-        # UPDATED: Match Windows 11 exactly - Main Mode with AES-256-SHA1-MODP2048
-        # FINAL FIX: Remove auto=start to prevent continuous loops
+        # CRITICAL FIX: Use exact same config as working debug script
         config_content = f"""
 config setup
     charondebug="ike 2, knl 1, cfg 1"
     strictcrlpolicy=no
     uniqueids=no
+    nat_traversal=yes
 
 conn vpntest
     type=transport
@@ -248,15 +248,14 @@ conn vpntest
     esp=aes256-sha1,3des-sha1!
     rekey=no
     leftid=%any
-    rightid=%any
-    aggressive=no
-    ikelifetime=86400s
+    rightid={server['ip']}
+    aggressive=yes
+    ikelifetime=28800s
     keylife=3600s
-    dpdaction=none
-    forceencaps=yes
-    margintime=9m
-    rekeyfuzz=100%
-    closeaction=none
+    dpdaction=clear
+    dpddelay=300s
+    dpdtimeout=90s
+    forceencaps=no
 """
         
         with open(config_file, 'w') as f:
@@ -615,7 +614,7 @@ password {server['password']}
             logger.debug(f"IPSec status output: {up_output}")
             
             # Wait for connection establishment with more frequent checks
-            max_wait = 15
+            max_wait = 20
             wait_time = 0
             connection_established = False
             
@@ -638,7 +637,7 @@ password {server['password']}
                 # Check for specific error patterns
                 error_details = self._analyze_ipsec_error(up_output, status_info)
                 
-                return False, connection_time, f"IPSec tunnel not established after {max_wait}s. Error: {error_details}"
+                return False, connection_time, f"IPSec tunnel not established after {max_wait}s. {error_details}"
             
             logger.debug(f"IPSec established, starting L2TP for {server['name']}")
             
@@ -738,11 +737,42 @@ password {server['password']}
             # Check strongSwan status first
             ipsec_established = self._check_ipsec_status()
             if ipsec_established:
-                logger.info("✅ IPSec tunnel ESTABLISHED successfully!")
-                return True
+                logger.debug("IPSec tunnel established")
             else:
                 logger.debug("IPSec tunnel not established")
                 return False
+            
+            # For L2TP/IPSec, IPSec establishment is often sufficient
+            # But let's also check for L2TP indicators
+            
+            # Check for ppp interfaces
+            ip_result = subprocess.run(['ip', 'addr', 'show'], capture_output=True, timeout=5)
+            ip_output = ip_result.stdout.decode()
+            if b'ppp' in ip_result.stdout:
+                logger.debug("PPP interface found")
+                return True
+            
+            # Check for VPN routes
+            route_result = subprocess.run(['ip', 'route'], capture_output=True, timeout=5)
+            route_output = route_result.stdout.decode()
+            if b'ppp' in route_result.stdout:
+                logger.debug("PPP route found")
+                return True
+            
+            # Check for active pppd processes
+            pppd_check = subprocess.run(['pgrep', 'pppd'], capture_output=True, timeout=5)
+            if pppd_check.returncode == 0:
+                logger.debug("PPP daemon running")
+                return True
+            
+            # If IPSec is established, consider it a partial success
+            # Some L2TP/IPSec setups only establish IPSec tunnel
+            if ipsec_established:
+                logger.debug("IPSec established - considering as successful connection")
+                return True
+            
+            logger.debug(f"No VPN indicators found. IP interfaces: {ip_output[:200]}... Routes: {route_output[:200]}...")
+            return False
             
         except Exception as e:
             logger.debug(f"Connection verification failed: {e}")
@@ -859,6 +889,9 @@ password {server['password']}
         logger.info(f"Public IP: {self.system_info['public_ip']}")
         logger.info(f"Monitor Version: {VERSION}")
         
+        # Store results for summary
+        results = []
+        
         for server in self.vpn_servers:
             logger.info(f"Testing VPN server: {server['name']} ({server['ip']})")
             
@@ -867,6 +900,14 @@ password {server['password']}
             # Log result to database
             self._log_result(server, success, connection_time, error_message)
             
+            # Store result for summary
+            results.append({
+                'server': server,
+                'success': success,
+                'connection_time': connection_time,
+                'error_message': error_message
+            })
+            
             if success:
                 logger.info(f"✓ {server['name']}: Connected successfully ({connection_time}ms)")
             else:
@@ -874,9 +915,42 @@ password {server['password']}
         
         logger.info("VPN monitoring run completed")
         
-        # Exit after one test run to prevent continuous loops
-        logger.info("Monitor run completed. Exiting to prevent continuous execution.")
-        sys.exit(0)
+        # Display summary
+        self._display_summary(results)
+    
+    def _display_summary(self, results):
+        """Display a summary of test results."""
+        print("\n" + "="*60)
+        print("🔍 VPN MONITORING RESULTS SUMMARY")
+        print("="*60)
+        
+        total_servers = len(results)
+        successful = sum(1 for r in results if r['success'])
+        failed = total_servers - successful
+        
+        print(f"📊 Overall Status: {successful}/{total_servers} servers successful")
+        print(f"⏱️  Test completed at: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+        print()
+        
+        for result in results:
+            server = result['server']
+            if result['success']:
+                print(f"✅ {server['name']} ({server['ip']})")
+                print(f"   └─ Connected in {result['connection_time']}ms")
+            else:
+                print(f"❌ {server['name']} ({server['ip']})")
+                print(f"   └─ Error: {result['error_message']}")
+            print()
+        
+        if failed > 0:
+            print("🔧 TROUBLESHOOTING:")
+            print("   • Run debug script: docker-compose run --rm vpn-monitor /app/synology_debug.sh")
+            print("   • Check server logs and firewall settings")
+            print("   • Verify shared keys and credentials")
+        
+        print("="*60)
+        print("📋 Results logged to database for historical tracking")
+        print("="*60)
 
 
 def signal_handler(signum, frame):
