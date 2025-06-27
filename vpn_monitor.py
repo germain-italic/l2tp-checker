@@ -225,14 +225,14 @@ class VPNMonitor:
         config_file = '/etc/ipsec.conf'
         secrets_file = '/etc/ipsec.secrets'
         
-        # EXACT configuration from working synology_debug.sh - Windows 11 match
+        # EXACT configuration from working synology_debug.sh - use auto=start for immediate connection
         config_content = f"""
 config setup
     charondebug="ike 2, knl 1, cfg 1"
     strictcrlpolicy=no
     uniqueids=no
 
-conn windows11_exact
+conn vpntest
     type=transport
     keyexchange=ikev1
     left=%defaultroute
@@ -240,16 +240,17 @@ conn windows11_exact
     right={server['ip']}
     rightprotoport=17/1701
     authby=psk
-    auto=add
-    ike=aes256-sha1-modp2048,aes256-sha1-modp1024!
+    auto=start
+    ike=aes256-sha1-modp2048,aes256-sha1-modp1024,3des-sha1-modp1024!
     esp=aes256-sha1,3des-sha1!
     rekey=no
     leftid=%any
     rightid=%any
     aggressive=no
-    ikelifetime=480m
+    ikelifetime=86400s
     keylife=3600s
     dpdaction=none
+    forceencaps=yes
     margintime=9m
     rekeyfuzz=100%
     closeaction=none
@@ -661,7 +662,7 @@ password {server['password']}
     def _verify_config_loaded(self) -> bool:
         """Verify that the VPN configuration was loaded successfully."""
         try:
-            # Check if our connection 'windows11_exact' is loaded (like debug script)
+            # Check if our connection 'vpntest' is loaded (like debug script)
             status_cmd = ['ipsec', 'status']
             status_result = subprocess.run(status_cmd, capture_output=True, timeout=5)
             
@@ -670,11 +671,11 @@ password {server['password']}
                 logger.debug(f"Configuration status output: {output[:300]}...")
                 
                 # Look for our connection in the output (like debug script checks)
-                if 'windows11_exact:' in output or 'windows11_exact ' in output:
-                    logger.debug("Configuration 'windows11_exact' found in status")
+                if 'vpntest:' in output or 'vpntest ' in output:
+                    logger.debug("Configuration 'vpntest' found in status")
                     return True
                 else:
-                    logger.debug("Configuration 'windows11_exact' not found in status output")
+                    logger.debug("Configuration 'vpntest' not found in status output")
                     
                     # Try alternative check like debug script
                     listconns_cmd = ['ipsec', 'listconns']
@@ -682,7 +683,7 @@ password {server['password']}
                     if listconns_result.returncode == 0:
                         listconns_output = listconns_result.stdout.decode()
                         logger.debug(f"List connections output: {listconns_output[:200]}...")
-                        if 'windows11_exact' in listconns_output:
+                        if 'vpntest' in listconns_output:
                             logger.debug("Configuration found via listconns")
                             return True
                     
@@ -733,78 +734,73 @@ password {server['password']}
                 connection_time = int((time.time() - start_time) * 1000)
                 return False, connection_time, "Failed to load IPSec configuration"
             
-            # Use EXACT approach from working debug script - manual connection
-            logger.debug(f"Attempting manual connection using debug script approach for {server['name']}")
-            
-            # Start packet capture like debug script (optional but helps with debugging)
-            tcpdump_process = None
-            try:
-                tcpdump_cmd = ['timeout', '30', 'tcpdump', '-i', 'any', '-n', 'host', server['ip'], 'and', 'port', '500', '-w', '/tmp/vpn_debug.pcap']
-                tcpdump_process = subprocess.Popen(tcpdump_cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-                time.sleep(1)  # Let tcpdump start
-            except:
-                logger.debug("Could not start packet capture (optional)")
-            
-            # Manual connection attempt - EXACT same as debug script
-            up_cmd = ['ipsec', 'up', 'windows11_exact']
-            up_result = subprocess.run(up_cmd, capture_output=True, timeout=20)
-            up_output = up_result.stdout.decode()
-            up_stderr = up_result.stderr.decode()
-            logger.debug(f"IPSec up command result: {up_result.returncode}")
-            logger.debug(f"IPSec up stdout: {up_output}")
-            logger.debug(f"IPSec up stderr: {up_stderr}")
-            
-            # Stop packet capture
-            if tcpdump_process:
-                try:
-                    tcpdump_process.terminate()
-                    tcpdump_process.wait(timeout=5)
-                except:
-                    pass
-            
-            # Wait a moment for connection to stabilize
+            # Wait for auto=start to trigger connection (like debug script)
+            logger.debug(f"Waiting for auto=start connection for {server['name']}")
             time.sleep(3)
             
-            # Check final status
+            # Check status to see if auto=start worked
             status_cmd = ['ipsec', 'statusall']
             status_result = subprocess.run(status_cmd, capture_output=True, timeout=5)
             status_output = status_result.stdout.decode() if status_result.returncode == 0 else "No status available"
             logger.debug(f"IPSec status output: {status_output}")
             
-            # Analyze results like debug script does
+            # Check if connection was established
             connection_time = int((time.time() - start_time) * 1000)
             
             if "ESTABLISHED" in status_output:
-                logger.info(f"🎉 SUCCESS: IPSec tunnel established with {server['name']}!")
-                return True, connection_time, None
-            elif "no proposal chosen" in up_output.lower() or "no proposal chosen" in status_output.lower():
-                error_msg = "Encryption algorithm mismatch - server rejected our proposals"
-                logger.debug(f"No proposal chosen error for {server['name']}")
-                return False, connection_time, error_msg
-            elif "authentication failed" in up_output.lower() or "authentication failed" in status_output.lower():
-                error_msg = "Authentication failed - likely incorrect shared key"
-                logger.debug(f"Authentication failed for {server['name']}")
-                return False, connection_time, error_msg
-            elif "timeout" in up_output.lower() or "retransmit" in up_output.lower():
-                error_msg = "Server not responding to handshake - possible firewall or server config issue"
-                logger.debug(f"Timeout/retransmit error for {server['name']}")
-                return False, connection_time, error_msg
-            else:
-                # Check if we got the same issue as in the logs - SA established but expired
-                if "ISAKMP SA established" in up_output or "STATE_MAIN_R3" in up_output:
-                    if "expired" in up_output.lower() or "expired" in status_output.lower():
-                        error_msg = "IPSec SA established but immediately expired - timing issue with Synology server"
-                        logger.debug(f"SA established but expired for {server['name']}")
-                        return False, connection_time, error_msg
-                    else:
-                        # SA established but no ESTABLISHED status - partial success
-                        logger.info(f"⚠️ PARTIAL SUCCESS: IPSec SA established for {server['name']} but connection incomplete")
-                        return True, connection_time, None
+                logger.debug(f"IPSec established, starting L2TP for {server['name']}")
                 
-                # Generic failure
-                error_msg = f"Connection failed. Details: {up_output[:200]}..."
-                logger.debug(f"Generic connection failure for {server['name']}")
-                return False, connection_time, error_msg
+                # Start xl2tpd
+                xl2tpd_cmd = ['xl2tpd', '-c', '/etc/xl2tpd/xl2tpd.conf', '-C', '/var/run/xl2tpd/l2tp-control']
+                xl2tpd_process = subprocess.Popen(xl2tpd_cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+                
+                # Wait for xl2tpd to start properly
+                time.sleep(3)
+                
+                # Attempt L2TP connection
+                try:
+                    # Check if control file exists
+                    if not os.path.exists('/var/run/xl2tpd/l2tp-control'):
+                        time.sleep(2)  # Wait a bit more
+                    
+                    if os.path.exists('/var/run/xl2tpd/l2tp-control'):
+                        # Send connect command via echo to control socket
+                        connect_cmd = 'echo "c vpntest" > /var/run/xl2tpd/l2tp-control'
+                        control_result = subprocess.run(connect_cmd, shell=True, capture_output=True, timeout=10)
+                        logger.debug(f"L2TP connect command result: {control_result.returncode}")
+                    else:
+                        logger.debug("L2TP control file not found")
+                    
+                    # Wait for connection establishment
+                    time.sleep(10)
+                    
+                except Exception as e:
+                    logger.debug(f"L2TP connection attempt failed: {e}")
+                
+                # Check if connection was established
+                if self._verify_vpn_connection():
+                    return True, connection_time, None
+                else:
+                    # Get more detailed error information
+                    status_cmd = ['ipsec', 'statusall']
+                    status_result = subprocess.run(status_cmd, capture_output=True, timeout=5)
+                    status_info = status_result.stdout.decode() if status_result.returncode == 0 else "No status available"
+                    
+                    # Check xl2tpd process
+                    xl2tpd_status = "xl2tpd not running"
+                    try:
+                        xl2tpd_check = subprocess.run(['pgrep', 'xl2tpd'], capture_output=True, timeout=5)
+                        if xl2tpd_check.returncode == 0:
+                            xl2tpd_status = "xl2tpd running"
+                    except:
+                        pass
+                    
+                    return False, connection_time, f"VPN tunnel establishment failed. IPSec status: {status_info}. L2TP status: {xl2tpd_status}"
+            
+            else:
+                # Check for specific error patterns
+                error_details = self._analyze_ipsec_error(status_output, status_output)
+                
             
         except subprocess.TimeoutExpired:
             connection_time = int((time.time() - start_time) * 1000)
