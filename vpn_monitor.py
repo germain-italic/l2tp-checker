@@ -69,6 +69,7 @@ class VPNMonitor:
         self.wsl2_bypass = os.getenv('WSL2_BYPASS_VPN', 'false').lower() == 'true'
         self.physical_gateway = os.getenv('PHYSICAL_GATEWAY', '192.168.100.1')
         self.physical_interface = os.getenv('PHYSICAL_INTERFACE', 'eth0')
+        self.bypass_namespace = 'vpn-bypass'
         
         # Parse VPN servers
         self.vpn_servers = self._parse_vpn_servers()
@@ -81,86 +82,281 @@ class VPNMonitor:
         
         # Setup WSL2 VPN bypass if enabled
         if self.wsl2_bypass:
-            self._setup_wsl2_bypass()
+            self._setup_network_namespace_bypass()
         
         # VPN configuration directories
         self.temp_dir = tempfile.mkdtemp(prefix="vpn_test_")
 
-    def _setup_wsl2_bypass(self):
-        """Setup routing to bypass Windows VPN for specific destinations."""
+    def _setup_network_namespace_bypass(self):
+        """Setup network namespace to completely bypass Windows VPN routing."""
         try:
-            logger.info("🔄 Setting up WSL2 VPN bypass routing...")
+            logger.info("🔄 Setting up network namespace VPN bypass...")
             
-            # Check if we're in WSL2
-            if not self._is_wsl2():
-                logger.info("Not running in WSL2, skipping VPN bypass setup")
+            # Create isolated network namespace
+            if not self._create_bypass_namespace():
+                logger.warning("Failed to create network namespace, using default routing")
                 return
             
-            # Add routes for VPN servers through physical gateway
-            for server in self.vpn_servers:
-                self._add_direct_route(server['ip'])
-            
-            # Add routes for public IP services through physical gateway
-            ip_services = ['8.8.8.8', '1.1.1.1', 'api.ipify.org', 'icanhazip.com', 'ipecho.net']
-            for service in ip_services:
-                if not service.replace('.', '').isdigit():
-                    # Resolve hostname first
-                    try:
-                        import socket
-                        ip = socket.gethostbyname(service)
-                        self._add_direct_route(ip)
-                        logger.debug(f"Added route for {service} -> {ip}")
-                    except:
-                        logger.debug(f"Could not resolve {service}")
-                else:
-                    self._add_direct_route(service)
-            
-            logger.info("✅ WSL2 VPN bypass routes configured")
+            logger.info("✅ Network namespace VPN bypass configured")
             
         except Exception as e:
-            logger.warning(f"WSL2 VPN bypass setup failed: {e}")
+            logger.warning(f"Network namespace VPN bypass setup failed: {e}")
     
-    def _is_wsl2(self) -> bool:
-        """Check if running in WSL2."""
+    def _create_bypass_namespace(self) -> bool:
+        """Create a network namespace that bypasses VPN routing."""
         try:
-            with open('/proc/version', 'r') as f:
-                version = f.read()
-                return 'microsoft' in version.lower() and 'wsl2' in version.lower()
-        except:
-            return False
-    
-    def _add_direct_route(self, destination: str):
-        """Add a direct route through physical gateway."""
-        try:
-            # Add route through physical gateway, bypassing VPN
-            route_cmd = [
-                'ip', 'route', 'add', destination,
-                'via', self.physical_gateway,
-                'dev', self.physical_interface,
-                'metric', '1'
+            # Delete existing namespace if it exists
+            subprocess.run(['ip', 'netns', 'delete', self.bypass_namespace], 
+                         capture_output=True, timeout=5)
+            
+            # Create new network namespace
+            ns_result = subprocess.run(['ip', 'netns', 'add', self.bypass_namespace], 
+                                     capture_output=True, timeout=5)
+            if ns_result.returncode != 0:
+                logger.error(f"Failed to create namespace: {ns_result.stderr.decode()}")
+                return False
+            
+            # Get the physical gateway IP (WSL2 host)
+            gateway_ip = self._get_wsl2_host_gateway()
+            if not gateway_ip:
+                logger.error("Could not determine WSL2 host gateway")
+                return False
+            
+            # Create veth pair to connect namespace to host
+            veth_host = f"veth-{self.bypass_namespace}"
+            veth_ns = f"veth-ns"
+            
+            # Create veth pair
+            veth_result = subprocess.run([
+                'ip', 'link', 'add', veth_host, 'type', 'veth', 'peer', 'name', veth_ns
+            ], capture_output=True, timeout=5)
+            
+            if veth_result.returncode != 0:
+                logger.error(f"Failed to create veth pair: {veth_result.stderr.decode()}")
+                return False
+            
+            # Move one end to namespace
+            subprocess.run(['ip', 'link', 'set', veth_ns, 'netns', self.bypass_namespace], 
+                         capture_output=True, timeout=5)
+            
+            # Configure host side of veth
+            subprocess.run(['ip', 'addr', 'add', '10.200.200.1/24', 'dev', veth_host], 
+                         capture_output=True, timeout=5)
+            subprocess.run(['ip', 'link', 'set', veth_host, 'up'], 
+                         capture_output=True, timeout=5)
+            
+            # Configure namespace side
+            ns_commands = [
+                ['ip', 'link', 'set', 'lo', 'up'],
+                ['ip', 'addr', 'add', '10.200.200.2/24', 'dev', veth_ns],
+                ['ip', 'link', 'set', veth_ns, 'up'],
+                ['ip', 'route', 'add', 'default', 'via', '10.200.200.1']
             ]
             
-            # Check if route already exists
-            check_cmd = ['ip', 'route', 'show', destination]
-            check_result = subprocess.run(check_cmd, capture_output=True, timeout=5)
+            for cmd in ns_commands:
+                result = subprocess.run(['ip', 'netns', 'exec', self.bypass_namespace] + cmd,
+                                      capture_output=True, timeout=5)
+                if result.returncode != 0:
+                    logger.debug(f"Namespace config command failed: {cmd}, error: {result.stderr.decode()}")
             
-            if check_result.returncode == 0 and self.physical_gateway in check_result.stdout.decode():
-                logger.debug(f"Route for {destination} already exists")
-                return
+            # Enable IP forwarding and NAT on host
+            subprocess.run(['sysctl', '-w', 'net.ipv4.ip_forward=1'], 
+                         capture_output=True, timeout=5)
             
-            # Add the route
-            route_result = subprocess.run(route_cmd, capture_output=True, timeout=5)
-            if route_result.returncode == 0:
-                logger.debug(f"Added direct route: {destination} via {self.physical_gateway}")
+            # Add iptables rules for NAT (bypass VPN)
+            # Route through the physical interface to bypass VPN
+            physical_ip = self._get_physical_interface_ip()
+            if physical_ip:
+                # Add MASQUERADE rule for traffic from namespace
+                subprocess.run([
+                    'iptables', '-t', 'nat', '-A', 'POSTROUTING', 
+                    '-s', '10.200.200.0/24', 
+                    '-o', self.physical_interface,
+                    '-j', 'MASQUERADE'
+                ], capture_output=True, timeout=5)
+                
+                # Add FORWARD rules
+                subprocess.run([
+                    'iptables', '-A', 'FORWARD', 
+                    '-i', veth_host, '-o', self.physical_interface,
+                    '-j', 'ACCEPT'
+                ], capture_output=True, timeout=5)
+                
+                subprocess.run([
+                    'iptables', '-A', 'FORWARD', 
+                    '-i', self.physical_interface, '-o', veth_host,
+                    '-j', 'ACCEPT'
+                ], capture_output=True, timeout=5)
+            
+            # Test namespace connectivity
+            test_result = subprocess.run([
+                'ip', 'netns', 'exec', self.bypass_namespace,
+                'ping', '-c', '1', '-W', '3', '8.8.8.8'
+            ], capture_output=True, timeout=10)
+            
+            if test_result.returncode == 0:
+                logger.info("✅ Network namespace connectivity test passed")
+                
+                # Test public IP from namespace
+                ip_result = subprocess.run([
+                    'ip', 'netns', 'exec', self.bypass_namespace,
+                    'curl', '-s', '--max-time', '5', 'https://api.ipify.org'
+                ], capture_output=True, timeout=10)
+                
+                if ip_result.returncode == 0:
+                    bypass_ip = ip_result.stdout.decode().strip()
+                    logger.info(f"🌐 Namespace public IP: {bypass_ip}")
+                    if bypass_ip != self.system_info.get('public_ip'):
+                        logger.info("🎉 Successfully bypassed VPN! Different IP detected.")
+                        return True
+                    else:
+                        logger.warning("⚠️ Same IP detected - VPN bypass may not be working")
+                
+                return True
             else:
-                logger.debug(f"Failed to add route for {destination}: {route_result.stderr.decode()}")
+                logger.error("❌ Network namespace connectivity test failed")
+                return False
+            
+        except Exception as e:
+            logger.error(f"Failed to create bypass namespace: {e}")
+            return False
+    
+    def _get_wsl2_host_gateway(self) -> str:
+        """Get the WSL2 host gateway IP."""
+        try:
+            route_result = subprocess.run(['ip', 'route', 'show', 'default'], 
+                                        capture_output=True, timeout=5)
+            if route_result.returncode == 0:
+                output = route_result.stdout.decode()
+                # Parse "default via X.X.X.X dev ethX"
+                parts = output.split()
+                if 'via' in parts:
+                    via_index = parts.index('via')
+                    if via_index + 1 < len(parts):
+                        return parts[via_index + 1]
+        except:
+            pass
+        return None
+    
+    def _get_physical_interface_ip(self) -> str:
+        """Get IP of physical interface."""
+        try:
+            result = subprocess.run(['ip', 'addr', 'show', self.physical_interface], 
+                                  capture_output=True, timeout=5)
+            if result.returncode == 0:
+                output = result.stdout.decode()
+                # Look for "inet X.X.X.X/XX"
+                import re
+                match = re.search(r'inet (\d+\.\d+\.\d+\.\d+)/', output)
+                if match:
+                    return match.group(1)
+        except:
+            pass
+        return None
+    
+    def _run_in_bypass_namespace(self, command: list) -> subprocess.CompletedProcess:
+        """Run a command in the bypass network namespace."""
+        if self.wsl2_bypass:
+            # Check if namespace exists
+            check_result = subprocess.run(['ip', 'netns', 'list'], capture_output=True, timeout=5)
+            if self.bypass_namespace in check_result.stdout.decode():
+                # Run in namespace
+                ns_cmd = ['ip', 'netns', 'exec', self.bypass_namespace] + command
+                return subprocess.run(ns_cmd, capture_output=True, timeout=30)
+        
+        # Fallback to normal execution
+        return subprocess.run(command, capture_output=True, timeout=30)
+    
+    def _cleanup_bypass_namespace(self):
+        """Clean up the bypass network namespace."""
+        try:
+            if self.wsl2_bypass:
+                # Remove iptables rules
+                subprocess.run([
+                    'iptables', '-t', 'nat', '-D', 'POSTROUTING', 
+                    '-s', '10.200.200.0/24', 
+                    '-o', self.physical_interface,
+                    '-j', 'MASQUERADE'
+                ], capture_output=True, timeout=5)
+                
+                # Delete namespace (this also removes veth interfaces)
+                subprocess.run(['ip', 'netns', 'delete', self.bypass_namespace], 
+                             capture_output=True, timeout=5)
+                
+                logger.debug("Cleaned up bypass network namespace")
+        except Exception as e:
+            logger.debug(f"Namespace cleanup warning: {e}")
+    
+    def __del__(self):
+        """Cleanup temporary files and network namespace."""
+        self._cleanup_bypass_namespace()
+        self._cleanup()
+
+    def _cleanup(self):
+        """Clean up temporary files and VPN connections."""
+        try:
+            # Clean up network namespace first
+            self._cleanup_bypass_namespace()
+            
+            # Stop any running VPN connections
+            self._stop_all_vpn_connections()
+            
+            # Remove temporary directory
+            if hasattr(self, 'temp_dir') and os.path.exists(self.temp_dir):
+                shutil.rmtree(self.temp_dir, ignore_errors=True)
                 
         except Exception as e:
-            logger.debug(f"Route add error for {destination}: {e}")
+            logger.warning(f"Cleanup warning: {e}")
 
-    def __del__(self):
-        """Cleanup temporary files."""
-        self._cleanup()
+    def _get_public_ip(self) -> Optional[str]:
+        """Get the current public IP address, using bypass namespace if enabled."""
+        try:
+            # Try multiple services for reliability
+            services = [
+                'https://api.ipify.org',
+                'https://icanhazip.com',
+                'https://ipecho.net/plain'
+            ]
+            
+            for service in services:
+                try:
+                    # Use bypass namespace if enabled
+                    if self.wsl2_bypass:
+                        result = self._run_in_bypass_namespace(['curl', '-s', '--max-time', '10', service])
+                        if result.returncode == 0:
+                            return result.stdout.decode().strip()
+                    else:
+                        # Use requests for normal operation
+                        response = requests.get(service, timeout=10)
+                        if response.status_code == 200:
+                            return response.text.strip()
+                except:
+                    continue
+                
+        except Exception as e:
+            logger.warning(f"Could not determine public IP: {e}")
+            
+        return None
+
+    def _test_basic_connectivity(self, ip: str) -> bool:
+        """Test basic network connectivity to IP, using bypass namespace if enabled."""
+        try:
+            # Use bypass namespace for connectivity test if enabled
+            if self.wsl2_bypass:
+                ping_result = self._run_in_bypass_namespace(['ping', '-c', '3', ip])
+            else:
+                ping_result = subprocess.run(['ping', '-c', '3', ip], capture_output=True, timeout=10)
+            
+            if ping_result.returncode == 0:
+                logger.debug(f"Ping to {ip} successful")
+                return True
+            else:
+                logger.debug(f"Ping to {ip} failed but continuing (server may block ICMP)")
+                return True  # Continue like debug script does
+                
+        except Exception as e:
+            logger.debug(f"Connectivity test error: {e}")
+            return True  # Continue anyway
 
     def _cleanup(self):
         """Clean up temporary files and VPN connections."""
