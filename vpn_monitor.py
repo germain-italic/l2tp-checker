@@ -354,15 +354,66 @@ password {server['password']}
         try:
             logger.debug("Starting strongSwan service using debug script approach")
             
+            # Debug: Show what strongSwan binaries are available
+            logger.debug("=== Discovering strongSwan binaries ===")
+            
+            # Check what's available via which command
+            for binary in ['ipsec', 'charon', 'starter', 'xl2tpd']:
+                which_result = subprocess.run(['which', binary], capture_output=True, timeout=5)
+                if which_result.returncode == 0:
+                    path = which_result.stdout.decode().strip()
+                    logger.debug(f"Found {binary} at: {path}")
+                else:
+                    logger.debug(f"{binary} not found in PATH")
+            
+            # Check common strongSwan directories
+            strongswan_dirs = ['/usr/lib/ipsec', '/usr/libexec/ipsec', '/usr/sbin']
+            for directory in strongswan_dirs:
+                if os.path.exists(directory):
+                    try:
+                        files = os.listdir(directory)
+                        strongswan_files = [f for f in files if f in ['charon', 'starter', 'ipsec']]
+                        if strongswan_files:
+                            logger.debug(f"strongSwan binaries in {directory}: {strongswan_files}")
+                    except:
+                        pass
+            
+            logger.debug("=== End binary discovery ===")
+            
             # Ensure clean state
             self._ensure_clean_strongswan_state()
             
+            # First, find the correct charon binary path
+            charon_paths = [
+                '/usr/lib/ipsec/charon',
+                '/usr/libexec/ipsec/charon', 
+                '/usr/sbin/charon',
+                'charon'
+            ]
+            
+            charon_binary = None
+            for path in charon_paths:
+                if os.path.exists(path) or path == 'charon':
+                    try:
+                        # Test if binary works
+                        test_result = subprocess.run([path, '--version'], capture_output=True, timeout=5)
+                        if test_result.returncode == 0:
+                            charon_binary = path
+                            logger.debug(f"Found working charon binary at: {path}")
+                            break
+                    except:
+                        continue
+            
+            if not charon_binary:
+                logger.debug("No charon binary found, falling back to ipsec start")
+                return self._fallback_ipsec_start()
+            
             # EXACT approach from working debug script
             logger.debug("1. Trying direct charon startup...")
-            logger.debug("Command: charon --use-syslog --debug-ike 1 --debug-knl 1")
+            logger.debug(f"Command: {charon_binary} --use-syslog --debug-ike 1 --debug-knl 1")
             
             # Start charon in background exactly like debug script
-            charon_cmd = ['charon', '--use-syslog', '--debug-ike', '1', '--debug-knl', '1']
+            charon_cmd = [charon_binary, '--use-syslog', '--debug-ike', '1', '--debug-knl', '1']
             charon_process = subprocess.Popen(charon_cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
             charon_pid = charon_process.pid
             logger.debug(f"Started charon with PID: {charon_pid}")
@@ -407,9 +458,27 @@ password {server['password']}
                         
                         # Method 3: Force start like debug script
                         logger.debug("3. Force starting with specific parameters...")
-                        logger.debug("Command: /usr/lib/ipsec/starter --daemon charon --debug 2")
                         
-                        starter_cmd = ['/usr/lib/ipsec/starter', '--daemon', 'charon', '--debug', '2']
+                        # Find starter binary
+                        starter_paths = [
+                            '/usr/lib/ipsec/starter',
+                            '/usr/libexec/ipsec/starter',
+                            '/usr/sbin/starter'
+                        ]
+                        
+                        starter_binary = None
+                        for path in starter_paths:
+                            if os.path.exists(path):
+                                starter_binary = path
+                                break
+                        
+                        if starter_binary:
+                            logger.debug(f"Command: {starter_binary} --daemon charon --debug 2")
+                            starter_cmd = [starter_binary, '--daemon', 'charon', '--debug', '2']
+                        else:
+                            logger.debug("No starter binary found, using ipsec start")
+                            starter_cmd = ['ipsec', 'start']
+                        
                         starter_process = subprocess.Popen(starter_cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
                         starter_pid = starter_process.pid
                         logger.debug(f"Started starter with PID: {starter_pid}")
@@ -556,10 +625,21 @@ password {server['password']}
                 logger.debug(f"ipsec stop result: {stop_result.returncode}")
                 time.sleep(2)
                 
-                # Start again
-                charon_cmd = ['charon', '--use-syslog', '--debug-ike', '1', '--debug-knl', '1']
-                charon_process = subprocess.Popen(charon_cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-                time.sleep(3)
+                # Start again - find charon binary first
+                charon_paths = ['/usr/lib/ipsec/charon', '/usr/libexec/ipsec/charon', '/usr/sbin/charon', 'charon']
+                charon_binary = None
+                for path in charon_paths:
+                    if os.path.exists(path):
+                        charon_binary = path
+                        break
+                
+                if charon_binary:
+                    charon_cmd = [charon_binary, '--use-syslog', '--debug-ike', '1', '--debug-knl', '1']
+                    charon_process = subprocess.Popen(charon_cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+                    time.sleep(3)
+                else:
+                    logger.debug("No charon binary found for restart")
+                    return False
                 
                 pgrep_result = subprocess.run(['pgrep', 'charon'], capture_output=True, timeout=5)
                 if pgrep_result.returncode == 0:
