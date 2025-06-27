@@ -594,24 +594,46 @@ password {server['password']}
             
             # Wait for auto=start to trigger connection (like debug script)
             logger.debug(f"Waiting for auto=start connection for {server['name']}")
-            time.sleep(2)
+            time.sleep(5)  # Give more time for connection like debug script
             
-            # Check status to see if auto=start worked
-            status_cmd = ['ipsec', 'statusall']
-            status_result = subprocess.run(status_cmd, capture_output=True, timeout=5)
-            status_output = status_result.stdout.decode() if status_result.returncode == 0 else "No status available"
-            logger.debug(f"IPSec status output: {status_output[:500]}...")
+            # Wait for connection establishment like debug script does
+            max_wait_time = 20  # Wait up to 20 seconds like debug script
+            wait_interval = 2
+            waited = 0
             
-            # Check if connection was established
+            while waited < max_wait_time:
+                # Check status
+                status_cmd = ['ipsec', 'statusall']
+                status_result = subprocess.run(status_cmd, capture_output=True, timeout=5)
+                status_output = status_result.stdout.decode() if status_result.returncode == 0 else "No status available"
+                
+                logger.debug(f"IPSec status check (waited {waited}s): {status_output[:200]}...")
+                
+                if "ESTABLISHED" in status_output:
+                    connection_time = int((time.time() - start_time) * 1000)
+                    logger.info(f"🎉 SUCCESS: IPSec tunnel established with {server['name']} after {waited}s!")
+                    return True, connection_time, None
+                elif "CONNECTING" in status_output:
+                    logger.debug(f"Still connecting to {server['name']}, waiting...")
+                    time.sleep(wait_interval)
+                    waited += wait_interval
+                    continue
+                else:
+                    # No connection attempt visible, something went wrong
+                    break
+            
+            # If we get here, connection failed or timed out
             connection_time = int((time.time() - start_time) * 1000)
             
-            if "ESTABLISHED" in status_output:
-                logger.info(f"🎉 SUCCESS: IPSec tunnel established with {server['name']}!")
-                return True, connection_time, None
+            # Get final status for error analysis
+            status_cmd = ['ipsec', 'statusall']
+            status_result = subprocess.run(status_cmd, capture_output=True, timeout=5)
+            final_status = status_result.stdout.decode() if status_result.returncode == 0 else "No status available"
             
-            else:
-                # Check for specific error patterns
-                error_details = self._analyze_ipsec_error(status_output, status_output) 
+            # Check for specific error patterns
+            error_details = self._analyze_ipsec_error(final_status, final_status)
+            return False, connection_time, error_details
+            
                 return False, connection_time, error_details
                 
             
