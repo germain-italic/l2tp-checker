@@ -359,116 +359,8 @@ password {server['password']}
             # Clean state first
             self._ensure_clean_strongswan_state()
             
-            # Method 1: Try direct charon startup
-            logger.debug("Attempting direct charon startup")
-            charon_cmd = [
-                'charon', 
-                '--use-syslog',
-                '--debug-ike', '1',
-                '--debug-knl', '1',
-                '--debug-cfg', '0'
-            ]
-            
-            try:
-                # Start charon in background
-                charon_process = subprocess.Popen(
-                    charon_cmd,
-                    stdout=subprocess.PIPE,
-                    stderr=subprocess.PIPE,
-                    preexec_fn=os.setsid  # Create new process group
-                )
-                
-                # Wait for charon to initialize
-                time.sleep(3)
-                
-                # Check if charon is running
-                if charon_process.poll() is None:
-                    logger.debug("Charon started successfully")
-                    
-                    # Wait a bit more for full initialization
-                    time.sleep(2)
-                    
-                    # Verify charon is responding
-                    if self._verify_charon_running():
-                        logger.debug("Charon is running and responding")
-                        return True
-                    else:
-                        logger.debug("Charon started but not responding properly")
-                        charon_process.terminate()
-                        return False
-                else:
-                    # Charon failed to start
-                    stdout, stderr = charon_process.communicate(timeout=5)
-                    logger.error(f"Charon failed to start: stdout={stdout.decode()}, stderr={stderr.decode()}")
-                    return False
-                    
-            except Exception as e:
-                logger.error(f"Failed to start charon directly: {e}")
-                
-                # Fallback to traditional ipsec start
-                logger.debug("Falling back to traditional ipsec start")
-                return self._fallback_ipsec_start()
-                
-        except Exception as e:
-            logger.error(f"Failed to start strongSwan service: {e}")
-            return False
-    
-    def _ensure_clean_strongswan_state(self):
-        """Ensure strongSwan is in a clean state before starting."""
-        try:
-            # Kill any existing processes
-            processes_to_kill = ['charon', 'starter', 'ipsec']
-            for process in processes_to_kill:
-                subprocess.run(['killall', '-9', process], capture_output=True, timeout=3)
-            
-            # Remove PID and control files
-            files_to_remove = [
-                '/var/run/charon.pid',
-                '/var/run/starter.charon.pid', 
-                '/var/run/starter.pid',
-                '/var/run/charon.ctl',
-                '/var/run/charon.vici'
-            ]
-            
-            for file_path in files_to_remove:
-                if os.path.exists(file_path):
-                    os.remove(file_path)
-                    logger.debug(f"Removed {file_path}")
-            
-            # Wait for cleanup
-            time.sleep(1)
-            
-        except Exception as e:
-            logger.debug(f"Cleanup warning: {e}")
-    
-    def _verify_charon_running(self) -> bool:
-        """Verify that charon daemon is running and responding."""
-        try:
-            # Check if charon process exists
-            pgrep_result = subprocess.run(['pgrep', 'charon'], capture_output=True, timeout=5)
-            if pgrep_result.returncode != 0:
-                logger.debug("Charon process not found")
-                return False
-            
-            # Try to get status via ipsec command
-            status_result = subprocess.run(['ipsec', 'status'], capture_output=True, timeout=5)
-            if status_result.returncode == 0:
-                logger.debug("Charon responding to status requests")
-                return True
-            else:
-                logger.debug(f"Charon not responding: {status_result.stderr.decode()}")
-                return False
-                
-        except Exception as e:
-            logger.debug(f"Charon verification failed: {e}")
-            return False
-    
-    def _fallback_ipsec_start(self) -> bool:
-        """Fallback method using traditional ipsec start."""
-        try:
-            logger.debug("Using fallback ipsec start method")
-            
-            # Try simple ipsec start (not --nofork to avoid hanging)
+            # Use traditional ipsec start (most reliable)
+            logger.debug("Starting strongSwan using ipsec start")
             start_cmd = ['ipsec', 'start']
             start_result = subprocess.run(start_cmd, capture_output=True, timeout=10)
             logger.debug(f"ipsec start result: {start_result.returncode}, stdout: {start_result.stdout.decode()}, stderr: {start_result.stderr.decode()}")
@@ -479,17 +371,17 @@ password {server['password']}
                 
                 # Verify it's running
                 if self._verify_charon_running():
-                    logger.debug("Fallback ipsec start successful")
+                    logger.debug("strongSwan started successfully")
                     return True
                 else:
-                    logger.debug("Fallback ipsec start failed verification")
+                    logger.debug("strongSwan start failed verification")
                     return False
             else:
-                logger.error(f"Fallback ipsec start failed: {start_result.stderr.decode()}")
+                logger.error(f"strongSwan start failed: {start_result.stderr.decode()}")
                 return False
                 
         except Exception as e:
-            logger.error(f"Fallback ipsec start exception: {e}")
+            logger.error(f"Failed to start strongSwan service: {e}")
             return False
 
     def _load_ipsec_config(self) -> bool:
