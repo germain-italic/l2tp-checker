@@ -352,60 +352,95 @@ password {server['password']}
     def _start_strongswan_daemon(self) -> bool:
         """Start strongSwan service properly."""
         try:
-            logger.debug("Starting strongSwan service")
+            logger.debug("Starting strongSwan service using debug script approach")
             
             # Ensure clean state
             self._ensure_clean_strongswan_state()
             
-            # Try direct charon startup first (more reliable in containers)
-            logger.debug("Attempting direct charon startup")
-            charon_cmd = [
-                'charon', 
-                '--use-syslog',
-                '--debug-ike', '1',
-                '--debug-knl', '1',
-                '--debug-cfg', '0'
-            ]
+            # EXACT approach from working debug script
+            logger.debug("1. Trying direct charon startup...")
+            logger.debug("Command: charon --use-syslog --debug-ike 1 --debug-knl 1")
             
-            try:
-                # Start charon in background
-                charon_process = subprocess.Popen(
-                    charon_cmd,
-                    stdout=subprocess.PIPE,
-                    stderr=subprocess.PIPE,
-                    preexec_fn=os.setsid  # Create new process group
-                )
+            # Start charon in background exactly like debug script
+            charon_cmd = ['charon', '--use-syslog', '--debug-ike', '1', '--debug-knl', '1']
+            charon_process = subprocess.Popen(charon_cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+            charon_pid = charon_process.pid
+            logger.debug(f"Started charon with PID: {charon_pid}")
+            
+            # Wait for charon to start like debug script
+            time.sleep(3)
+            
+            # Check if charon is running like debug script does
+            if charon_process.poll() is None:
+                logger.debug("✓ Charon started successfully")
+                logger.debug("Process details:")
                 
-                # Wait for charon to initialize
-                time.sleep(3)
+                # Verify with pgrep like debug script
+                pgrep_result = subprocess.run(['pgrep', '-l', 'charon'], capture_output=True, timeout=5)
+                if pgrep_result.returncode == 0:
+                    logger.debug(f"Charon process found: {pgrep_result.stdout.decode().strip()}")
+                    return True
+                else:
+                    logger.debug("No charon process found with pgrep")
+                    return False
+            else:
+                logger.debug("✗ Charon failed to start, trying alternative method...")
                 
-                # Check if charon is running
-                if charon_process.poll() is None:
-                    logger.debug("Charon started successfully")
+                # Method 2: Try traditional ipsec start with timeout (like debug script)
+                logger.debug("2. Trying traditional ipsec start...")
+                logger.debug("Command: timeout 10 ipsec start")
+                
+                ipsec_start_cmd = ['timeout', '10', 'ipsec', 'start']
+                ipsec_result = subprocess.run(ipsec_start_cmd, capture_output=True, timeout=15)
+                logger.debug(f"ipsec start result: {ipsec_result.returncode}")
+                
+                if ipsec_result.returncode == 0:
+                    time.sleep(3)
                     
-                    # Wait a bit more for full initialization
-                    time.sleep(2)
-                    
-                    # Verify charon is responding
-                    if self._verify_charon_running():
-                        logger.debug("Charon is running and responding")
+                    # Check if it worked
+                    pgrep_result = subprocess.run(['pgrep', 'charon'], capture_output=True, timeout=5)
+                    if pgrep_result.returncode == 0:
+                        logger.debug("✓ strongSwan started with ipsec start")
                         return True
                     else:
-                        logger.debug("Charon started but not responding properly")
-                        charon_process.terminate()
-                        return False
+                        logger.debug("✗ ipsec start failed verification")
+                        
+                        # Method 3: Force start like debug script
+                        logger.debug("3. Force starting with specific parameters...")
+                        logger.debug("Command: /usr/lib/ipsec/starter --daemon charon --debug 2")
+                        
+                        starter_cmd = ['/usr/lib/ipsec/starter', '--daemon', 'charon', '--debug', '2']
+                        starter_process = subprocess.Popen(starter_cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+                        starter_pid = starter_process.pid
+                        logger.debug(f"Started starter with PID: {starter_pid}")
+                        
+                        time.sleep(5)
+                        
+                        # Final check
+                        pgrep_result = subprocess.run(['pgrep', 'charon'], capture_output=True, timeout=5)
+                        if pgrep_result.returncode == 0:
+                            logger.debug("✓ strongSwan force-started successfully")
+                            return True
+                        else:
+                            logger.error("❌ Failed to start strongSwan - container may need privileged mode")
+                            logger.debug("Checking system logs for errors:")
+                            
+                            # Check dmesg like debug script
+                            dmesg_result = subprocess.run(['dmesg'], capture_output=True, timeout=5)
+                            if dmesg_result.returncode == 0:
+                                dmesg_output = dmesg_result.stdout.decode()
+                                ipsec_lines = [line for line in dmesg_output.split('\n') if 'ipsec' in line.lower()]
+                                if ipsec_lines:
+                                    logger.debug(f"IPSec-related kernel messages: {ipsec_lines[-5:]}")
+                                else:
+                                    logger.debug("No IPSec-related kernel messages")
+                            
+                            logger.debug("   Try running: docker-compose run --privileged vpn-monitor /app/synology_debug.sh")
+                            logger.debug("   Continuing with debug anyway...")
+                            return False
                 else:
-                    # Charon failed to start
-                    stdout, stderr = charon_process.communicate(timeout=5)
-                    logger.error(f"Charon failed to start: stdout={stdout.decode()}, stderr={stderr.decode()}")
+                    logger.debug(f"ipsec start failed with code {ipsec_result.returncode}")
                     return False
-                    
-            except Exception as e:
-                logger.error(f"Failed to start charon directly: {e}")
-                
-                # Fallback to traditional ipsec start
-                logger.debug("Falling back to traditional ipsec start")
-                return self._fallback_ipsec_start()
                 
         except Exception as e:
             logger.error(f"Failed to start strongSwan service: {e}")
@@ -493,23 +528,50 @@ password {server['password']}
     def _load_ipsec_config(self) -> bool:
         """Load IPSec configuration."""
         try:
-            logger.debug("Loading IPSec configuration")
+            logger.debug("Loading IPSec configuration using debug script approach")
             
             # Verify charon is running before attempting to load config
-            if not self._verify_charon_running():
+            pgrep_result = subprocess.run(['pgrep', 'charon'], capture_output=True, timeout=5)
+            if pgrep_result.returncode != 0:
                 logger.error("Charon not running, cannot load configuration")
                 return False
+            else:
+                logger.debug("Charon is running, proceeding with config load")
             
-            # Use ipsec reload to load configuration
-            logger.debug("Reloading strongSwan configuration")
+            # Use ipsec reload exactly like debug script
+            logger.debug("Attempting to load configuration...")
             reload_cmd = ['ipsec', 'reload']
-            reload_result = subprocess.run(reload_cmd, capture_output=True, timeout=8)
-            logger.debug(f"Reload command result: {reload_result.returncode}, stdout: {reload_result.stdout.decode()}, stderr: {reload_result.stderr.decode()}")
+            reload_result = subprocess.run(reload_cmd, capture_output=True, timeout=10)
             
-            # Wait for configuration to be processed
+            if reload_result.returncode == 0:
+                logger.debug("✓ Configuration reloaded successfully")
+            else:
+                logger.debug("✗ Reload failed, trying alternative loading method...")
+                
+                # Alternative: restart with new config (like debug script)
+                logger.debug("Restarting strongSwan with new configuration...")
+                
+                # Stop first
+                stop_result = subprocess.run(['ipsec', 'stop'], capture_output=True, timeout=5)
+                logger.debug(f"ipsec stop result: {stop_result.returncode}")
+                time.sleep(2)
+                
+                # Start again
+                charon_cmd = ['charon', '--use-syslog', '--debug-ike', '1', '--debug-knl', '1']
+                charon_process = subprocess.Popen(charon_cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+                time.sleep(3)
+                
+                pgrep_result = subprocess.run(['pgrep', 'charon'], capture_output=True, timeout=5)
+                if pgrep_result.returncode == 0:
+                    logger.debug("✓ strongSwan restarted with new configuration")
+                else:
+                    logger.error("❌ Failed to restart strongSwan")
+                    return False
+            
+            # Wait for configuration to be processed like debug script
             time.sleep(3)
             
-            # Verify configuration was loaded by checking if our connection is listed
+            # Verify configuration was loaded
             return self._verify_config_loaded()
                     
         except Exception as e:
@@ -519,37 +581,34 @@ password {server['password']}
     def _verify_config_loaded(self) -> bool:
         """Verify that the VPN configuration was loaded successfully."""
         try:
-            # Check if our connection 'vpntest' is loaded
+            # Check if our connection 'windows11_exact' is loaded (like debug script)
             status_cmd = ['ipsec', 'status']
             status_result = subprocess.run(status_cmd, capture_output=True, timeout=5)
             
             if status_result.returncode == 0:
                 output = status_result.stdout.decode()
-                logger.debug(f"Configuration status output: {output}")
+                logger.debug(f"Configuration status output: {output[:300]}...")
                 
-                # Look for our connection in the output
-                if 'vpntest:' in output or 'vpntest ' in output:
-                    logger.debug("Configuration 'vpntest' found in status")
-                    return True
-                elif 'windows11_exact:' in output or 'windows11_exact ' in output:
+                # Look for our connection in the output (like debug script checks)
+                if 'windows11_exact:' in output or 'windows11_exact ' in output:
                     logger.debug("Configuration 'windows11_exact' found in status")
                     return True
                 else:
-                    logger.debug("Configuration 'vpntest' not found in status output")
+                    logger.debug("Configuration 'windows11_exact' not found in status output")
                     
-                    # Try alternative check - look for the connection in a different way
+                    # Try alternative check like debug script
                     listconns_cmd = ['ipsec', 'listconns']
                     listconns_result = subprocess.run(listconns_cmd, capture_output=True, timeout=5)
                     if listconns_result.returncode == 0:
                         listconns_output = listconns_result.stdout.decode()
-                        logger.debug(f"List connections output: {listconns_output}")
-                        if 'vpntest' in listconns_output or 'windows11_exact' in listconns_output:
+                        logger.debug(f"List connections output: {listconns_output[:200]}...")
+                        if 'windows11_exact' in listconns_output:
                             logger.debug("Configuration found via listconns")
                             return True
                     
                     return False
             else:
-                logger.error(f"Status command failed: {status_result.stderr.decode()}")
+                logger.error(f"Status command failed: {status_result.stderr.decode()[:200]}...")
                 return False
                 
         except Exception as e:
