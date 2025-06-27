@@ -18,7 +18,7 @@ services:
       - vpn-logs:/var/log/vpn-monitor
       - /lib/modules:/lib/modules:ro
     
-    # Use host networking (required for WSL2 VPN bypass)
+    # Network configuration
     network_mode: host
     
     # Environment variables (can be overridden by .env file)

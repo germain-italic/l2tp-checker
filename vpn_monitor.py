@@ -65,12 +65,6 @@ class VPNMonitor:
         self.monitor_id = os.getenv('MONITOR_ID', '')
         self.poll_interval = int(os.getenv('POLL_INTERVAL_MINUTES', 5))
         
-        # WSL2 VPN bypass configuration
-        self.wsl2_bypass = os.getenv('WSL2_BYPASS_VPN', 'false').lower() == 'true'
-        self.physical_gateway = os.getenv('PHYSICAL_GATEWAY', '192.168.100.1')
-        self.physical_interface = os.getenv('PHYSICAL_INTERFACE', 'eth0')
-        self.bypass_namespace = 'vpn-bypass'
-        
         # Parse VPN servers
         self.vpn_servers = self._parse_vpn_servers()
         
@@ -80,224 +74,16 @@ class VPNMonitor:
         # Validate configuration
         self._validate_config()
         
-        # Setup WSL2 VPN bypass if enabled
-        if self.wsl2_bypass:
-            self._setup_network_namespace_bypass()
-        
         # VPN configuration directories
         self.temp_dir = tempfile.mkdtemp(prefix="vpn_test_")
 
-    def _setup_network_namespace_bypass(self):
-        """Setup network namespace to completely bypass Windows VPN routing."""
-        try:
-            logger.info("🔄 Setting up network namespace VPN bypass...")
-            
-            # Create isolated network namespace
-            if not self._create_bypass_namespace():
-                logger.warning("Failed to create network namespace, using default routing")
-                return
-            
-            logger.info("✅ Network namespace VPN bypass configured")
-            
-        except Exception as e:
-            logger.warning(f"Network namespace VPN bypass setup failed: {e}")
-    
-    def _create_bypass_namespace(self) -> bool:
-        """Create a network namespace that bypasses VPN routing."""
-        try:
-            # Delete existing namespace if it exists
-            subprocess.run(['ip', 'netns', 'delete', self.bypass_namespace], 
-                         capture_output=True, timeout=5)
-            
-            # Create new network namespace
-            ns_result = subprocess.run(['ip', 'netns', 'add', self.bypass_namespace], 
-                                     capture_output=True, timeout=5)
-            if ns_result.returncode != 0:
-                logger.error(f"Failed to create namespace: {ns_result.stderr.decode()}")
-                return False
-            
-            # Get the physical gateway IP (WSL2 host)
-            gateway_ip = self._get_wsl2_host_gateway()
-            if not gateway_ip:
-                logger.error("Could not determine WSL2 host gateway")
-                return False
-            
-            # Create veth pair to connect namespace to host
-            veth_host = f"veth-{self.bypass_namespace}"
-            veth_ns = f"veth-ns"
-            
-            # Create veth pair
-            veth_result = subprocess.run([
-                'ip', 'link', 'add', veth_host, 'type', 'veth', 'peer', 'name', veth_ns
-            ], capture_output=True, timeout=5)
-            
-            if veth_result.returncode != 0:
-                logger.error(f"Failed to create veth pair: {veth_result.stderr.decode()}")
-                return False
-            
-            # Move one end to namespace
-            subprocess.run(['ip', 'link', 'set', veth_ns, 'netns', self.bypass_namespace], 
-                         capture_output=True, timeout=5)
-            
-            # Configure host side of veth
-            subprocess.run(['ip', 'addr', 'add', '10.200.200.1/24', 'dev', veth_host], 
-                         capture_output=True, timeout=5)
-            subprocess.run(['ip', 'link', 'set', veth_host, 'up'], 
-                         capture_output=True, timeout=5)
-            
-            # Configure namespace side
-            ns_commands = [
-                ['ip', 'link', 'set', 'lo', 'up'],
-                ['ip', 'addr', 'add', '10.200.200.2/24', 'dev', veth_ns],
-                ['ip', 'link', 'set', veth_ns, 'up'],
-                ['ip', 'route', 'add', 'default', 'via', '10.200.200.1']
-            ]
-            
-            for cmd in ns_commands:
-                result = subprocess.run(['ip', 'netns', 'exec', self.bypass_namespace] + cmd,
-                                      capture_output=True, timeout=5)
-                if result.returncode != 0:
-                    logger.debug(f"Namespace config command failed: {cmd}, error: {result.stderr.decode()}")
-            
-            # Enable IP forwarding and NAT on host
-            subprocess.run(['sysctl', '-w', 'net.ipv4.ip_forward=1'], 
-                         capture_output=True, timeout=5)
-            
-            # Add iptables rules for NAT (bypass VPN)
-            # Route through the physical interface to bypass VPN
-            physical_ip = self._get_physical_interface_ip()
-            if physical_ip:
-                # Add MASQUERADE rule for traffic from namespace
-                subprocess.run([
-                    'iptables', '-t', 'nat', '-A', 'POSTROUTING', 
-                    '-s', '10.200.200.0/24', 
-                    '-o', self.physical_interface,
-                    '-j', 'MASQUERADE'
-                ], capture_output=True, timeout=5)
-                
-                # Add FORWARD rules
-                subprocess.run([
-                    'iptables', '-A', 'FORWARD', 
-                    '-i', veth_host, '-o', self.physical_interface,
-                    '-j', 'ACCEPT'
-                ], capture_output=True, timeout=5)
-                
-                subprocess.run([
-                    'iptables', '-A', 'FORWARD', 
-                    '-i', self.physical_interface, '-o', veth_host,
-                    '-j', 'ACCEPT'
-                ], capture_output=True, timeout=5)
-            
-            # Test namespace connectivity
-            test_result = subprocess.run([
-                'ip', 'netns', 'exec', self.bypass_namespace,
-                'ping', '-c', '1', '-W', '3', '8.8.8.8'
-            ], capture_output=True, timeout=10)
-            
-            if test_result.returncode == 0:
-                logger.info("✅ Network namespace connectivity test passed")
-                
-                # Test public IP from namespace
-                ip_result = subprocess.run([
-                    'ip', 'netns', 'exec', self.bypass_namespace,
-                    'curl', '-s', '--max-time', '5', 'https://api.ipify.org'
-                ], capture_output=True, timeout=10)
-                
-                if ip_result.returncode == 0:
-                    bypass_ip = ip_result.stdout.decode().strip()
-                    logger.info(f"🌐 Namespace public IP: {bypass_ip}")
-                    if bypass_ip != self.system_info.get('public_ip'):
-                        logger.info("🎉 Successfully bypassed VPN! Different IP detected.")
-                        return True
-                    else:
-                        logger.warning("⚠️ Same IP detected - VPN bypass may not be working")
-                
-                return True
-            else:
-                logger.error("❌ Network namespace connectivity test failed")
-                return False
-            
-        except Exception as e:
-            logger.error(f"Failed to create bypass namespace: {e}")
-            return False
-    
-    def _get_wsl2_host_gateway(self) -> str:
-        """Get the WSL2 host gateway IP."""
-        try:
-            route_result = subprocess.run(['ip', 'route', 'show', 'default'], 
-                                        capture_output=True, timeout=5)
-            if route_result.returncode == 0:
-                output = route_result.stdout.decode()
-                # Parse "default via X.X.X.X dev ethX"
-                parts = output.split()
-                if 'via' in parts:
-                    via_index = parts.index('via')
-                    if via_index + 1 < len(parts):
-                        return parts[via_index + 1]
-        except:
-            pass
-        return None
-    
-    def _get_physical_interface_ip(self) -> str:
-        """Get IP of physical interface."""
-        try:
-            result = subprocess.run(['ip', 'addr', 'show', self.physical_interface], 
-                                  capture_output=True, timeout=5)
-            if result.returncode == 0:
-                output = result.stdout.decode()
-                # Look for "inet X.X.X.X/XX"
-                import re
-                match = re.search(r'inet (\d+\.\d+\.\d+\.\d+)/', output)
-                if match:
-                    return match.group(1)
-        except:
-            pass
-        return None
-    
-    def _run_in_bypass_namespace(self, command: list) -> subprocess.CompletedProcess:
-        """Run a command in the bypass network namespace."""
-        if self.wsl2_bypass:
-            # Check if namespace exists
-            check_result = subprocess.run(['ip', 'netns', 'list'], capture_output=True, timeout=5)
-            if self.bypass_namespace in check_result.stdout.decode():
-                # Run in namespace
-                ns_cmd = ['ip', 'netns', 'exec', self.bypass_namespace] + command
-                return subprocess.run(ns_cmd, capture_output=True, timeout=30)
-        
-        # Fallback to normal execution
-        return subprocess.run(command, capture_output=True, timeout=30)
-    
-    def _cleanup_bypass_namespace(self):
-        """Clean up the bypass network namespace."""
-        try:
-            if self.wsl2_bypass:
-                # Remove iptables rules
-                subprocess.run([
-                    'iptables', '-t', 'nat', '-D', 'POSTROUTING', 
-                    '-s', '10.200.200.0/24', 
-                    '-o', self.physical_interface,
-                    '-j', 'MASQUERADE'
-                ], capture_output=True, timeout=5)
-                
-                # Delete namespace (this also removes veth interfaces)
-                subprocess.run(['ip', 'netns', 'delete', self.bypass_namespace], 
-                             capture_output=True, timeout=5)
-                
-                logger.debug("Cleaned up bypass network namespace")
-        except Exception as e:
-            logger.debug(f"Namespace cleanup warning: {e}")
-    
     def __del__(self):
-        """Cleanup temporary files and network namespace."""
-        self._cleanup_bypass_namespace()
+        """Cleanup temporary files."""
         self._cleanup()
 
     def _cleanup(self):
         """Clean up temporary files and VPN connections."""
         try:
-            # Clean up network namespace first
-            self._cleanup_bypass_namespace()
-            
             # Stop any running VPN connections
             self._stop_all_vpn_connections()
             
@@ -307,112 +93,6 @@ class VPNMonitor:
                 
         except Exception as e:
             logger.warning(f"Cleanup warning: {e}")
-
-    def _get_public_ip(self) -> Optional[str]:
-        """Get the current public IP address, using bypass namespace if enabled."""
-        try:
-            # Check if we're in WSL2 with VPN bypass enabled
-            wsl2_bypass = os.getenv('WSL2_BYPASS_VPN', 'false').lower() == 'true'
-            
-            if wsl2_bypass:
-                # Try to detect if we're getting VPN IP vs physical IP
-                return self._get_public_ip_with_wsl2_detection()
-            
-            # Try multiple services for reliability
-            services = [
-                'https://api.ipify.org',
-                'https://icanhazip.com',
-                'https://ipecho.net/plain'
-            ]
-            
-            for service in services:
-                try:
-                    # Use bypass namespace if enabled
-                    if self.wsl2_bypass:
-                        result = self._run_in_bypass_namespace(['curl', '-s', '--max-time', '10', service])
-                        if result.returncode == 0:
-                            return result.stdout.decode().strip()
-                    else:
-                        # Use requests for normal operation
-                        response = requests.get(service, timeout=10)
-                        if response.status_code == 200:
-                            return response.text.strip()
-                except:
-                    continue
-                
-        except Exception as e:
-            logger.warning(f"Could not determine public IP: {e}")
-            
-        return None
-
-    def _get_public_ip_with_wsl2_detection(self) -> Optional[str]:
-        """Get public IP with WSL2 VPN bypass detection and user guidance."""
-        try:
-            # Get public IP using standard method
-            services = [
-                'https://api.ipify.org',
-                'https://icanhazip.com',
-                'https://ipecho.net/plain'
-            ]
-            
-            public_ip = None
-            for service in services:
-                try:
-                    response = requests.get(service, timeout=10)
-                    if response.status_code == 200:
-                        public_ip = response.text.strip()
-                        break
-                except:
-                    continue
-            
-            if public_ip:
-                # Check if this looks like a VPN IP by comparing with expected physical range
-                physical_gateway = os.getenv('PHYSICAL_GATEWAY', '192.168.100.1')
-                expected_physical_network = '.'.join(physical_gateway.split('.')[:-1]) + '.'
-                
-                if public_ip.startswith(expected_physical_network):
-                    logger.info(f"✅ Using physical IP: {public_ip} (VPN bypass successful)")
-                    return public_ip
-                else:
-                    # This appears to be a VPN IP
-                    logger.warning("⚠️  WSL2 + Windows VPN Limitation Detected")
-                    logger.warning(f"🔒 Current IP: {public_ip} (appears to be VPN IP)")
-                    logger.warning(f"🎯 Expected physical network: {expected_physical_network}x")
-                    logger.warning("")
-                    logger.warning("📋 SOLUTIONS:")
-                    logger.warning("1. 🛑 Temporarily disconnect Windows VPN during monitoring")
-                    logger.warning("2. ⚙️  Configure OpenVPN split tunneling to exclude test destinations")
-                    logger.warning("3. 🖥️  Run monitoring from a separate Linux system")
-                    logger.warning("4. ✅ Continue with VPN IP (testing monitoring system functionality)")
-                    logger.warning("")
-                    logger.warning("ℹ️  Set WSL2_BYPASS_VPN=false to disable this warning")
-                    return public_ip
-            
-            return public_ip
-                    
-        except Exception as e:
-            logger.warning(f"WSL2 VPN detection failed: {e}")
-            return None
-
-    def _test_basic_connectivity(self, ip: str) -> bool:
-        """Test basic network connectivity to IP, using bypass namespace if enabled."""
-        try:
-            # Use bypass namespace for connectivity test if enabled
-            if self.wsl2_bypass:
-                ping_result = self._run_in_bypass_namespace(['ping', '-c', '3', ip])
-            else:
-                ping_result = subprocess.run(['ping', '-c', '3', ip], capture_output=True, timeout=10)
-            
-            if ping_result.returncode == 0:
-                logger.debug(f"Ping to {ip} successful")
-                return True
-            else:
-                logger.debug(f"Ping to {ip} failed but continuing (server may block ICMP)")
-                return True  # Continue like debug script does
-                
-        except Exception as e:
-            logger.debug(f"Connectivity test error: {e}")
-            return True  # Continue anyway
 
     def _parse_vpn_servers(self) -> List[Dict[str, str]]:
         """Parse VPN servers from environment variable."""
@@ -456,6 +136,29 @@ class VPNMonitor:
             info['hostname'] = self.monitor_id
             
         return info
+
+    def _get_public_ip(self) -> Optional[str]:
+        """Get the current public IP address."""
+        try:
+            # Try multiple services for reliability
+            services = [
+                'https://api.ipify.org',
+                'https://icanhazip.com',
+                'https://ipecho.net/plain'
+            ]
+            
+            for service in services:
+                try:
+                    response = requests.get(service, timeout=10)
+                    if response.status_code == 200:
+                        return response.text.strip()
+                except:
+                    continue
+                    
+        except Exception as e:
+            logger.warning(f"Could not determine public IP: {e}")
+            
+        return None
 
     def _validate_config(self):
         """Validate configuration."""
@@ -794,6 +497,69 @@ password {server['password']}
             logger.debug(f"Charon verification failed: {e}")
             return False
 
+    def _load_ipsec_config(self) -> bool:
+        """Load IPSec configuration."""
+        try:
+            logger.debug("Loading IPSec configuration")
+            
+            # Verify charon is running before attempting to load config
+            if not self._verify_charon_running():
+                logger.error("Charon not running, cannot load configuration")
+                return False
+            
+            # Use ipsec reload to load configuration
+            logger.debug("Reloading strongSwan configuration")
+            reload_cmd = ['ipsec', 'reload']
+            reload_result = subprocess.run(reload_cmd, capture_output=True, timeout=8)
+            logger.debug(f"Reload command result: {reload_result.returncode}, stdout: {reload_result.stdout.decode()}, stderr: {reload_result.stderr.decode()}")
+            
+            # Wait for configuration to be processed
+            time.sleep(3)
+            
+            # Verify configuration was loaded by checking if our connection is listed
+            return self._verify_config_loaded()
+                    
+        except Exception as e:
+            logger.error(f"Failed to load IPSec configuration: {e}")
+            return False
+    
+    def _verify_config_loaded(self) -> bool:
+        """Verify that the VPN configuration was loaded successfully."""
+        try:
+            # Check if our connection 'vpntest' is loaded (like debug script)
+            status_cmd = ['ipsec', 'status']
+            status_result = subprocess.run(status_cmd, capture_output=True, timeout=5)
+            
+            if status_result.returncode == 0:
+                output = status_result.stdout.decode()
+                logger.debug(f"Configuration status output: {output[:300]}...")
+                
+                # Look for our connection in the output - format is "vpntest[number]:"
+                if 'vpntest[' in output or 'vpntest:' in output or 'vpntest ' in output:
+                    logger.debug("Configuration 'vpntest' found in status")
+                    return True
+                else:
+                    logger.debug("Configuration 'vpntest' not found in status output")
+                    
+                    # Try alternative check like debug script
+                    listconns_cmd = ['ipsec', 'listconns']
+                    listconns_result = subprocess.run(listconns_cmd, capture_output=True, timeout=5)
+                    if listconns_result.returncode == 0:
+                        listconns_output = listconns_result.stdout.decode()
+                        logger.debug(f"List connections output: {listconns_output[:200]}...")
+                        if 'vpntest' in listconns_output:
+                            logger.debug("Configuration found via listconns")
+                            return True
+                    
+                    return False
+            else:
+                logger.error(f"Status command failed: {status_result.stderr.decode()[:200]}...")
+                return False
+                
+        except Exception as e:
+            logger.error(f"Configuration verification failed: {e}")
+            return False
+
     def _test_vpn_connection(self, server: Dict[str, str]) -> Tuple[bool, Optional[int], Optional[str]]:
         """
         Test actual VPN connection to a server.
@@ -883,6 +649,24 @@ password {server['password']}
         finally:
             # Always cleanup
             self._stop_all_vpn_connections()
+
+    def _test_basic_connectivity(self, ip: str) -> bool:
+        """Test basic network connectivity to IP."""
+        try:
+            # Use same ping approach as debug script
+            ping_cmd = ['ping', '-c', '3', ip]
+            ping_result = subprocess.run(ping_cmd, capture_output=True, timeout=10)
+            
+            if ping_result.returncode == 0:
+                logger.debug(f"Ping to {ip} successful")
+                return True
+            else:
+                logger.debug(f"Ping to {ip} failed but continuing (server may block ICMP)")
+                return True  # Continue like debug script does
+                
+        except Exception as e:
+            logger.debug(f"Connectivity test error: {e}")
+            return True  # Continue anyway
 
     def _check_ipsec_status(self) -> bool:
         """Check if IPSec tunnel is established."""
