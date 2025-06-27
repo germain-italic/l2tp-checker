@@ -385,6 +385,68 @@ password {server['password']}
             return False
 
     def _load_ipsec_config(self) -> bool:
+        """Load IPSec configuration."""
+        try:
+            logger.debug("Loading IPSec configuration")
+            
+            # Verify charon is running before attempting to load config
+            if not self._verify_charon_running():
+                logger.error("Charon not running, cannot load configuration")
+                return False
+            
+            # Use ipsec reload to load configuration
+            logger.debug("Reloading strongSwan configuration")
+            reload_cmd = ['ipsec', 'reload']
+            reload_result = subprocess.run(reload_cmd, capture_output=True, timeout=8)
+            logger.debug(f"Reload command result: {reload_result.returncode}, stdout: {reload_result.stdout.decode()}, stderr: {reload_result.stderr.decode()}")
+            
+            # Wait for configuration to be processed
+            time.sleep(3)
+            
+            # Verify configuration was loaded by checking if our connection is listed
+            return self._verify_config_loaded()
+                    
+        except Exception as e:
+            logger.error(f"Failed to load IPSec configuration: {e}")
+            return False
+    
+    def _verify_config_loaded(self) -> bool:
+        """Verify that the VPN configuration was loaded successfully."""
+        try:
+            # Check if our connection 'vpntest' is loaded (like debug script)
+            status_cmd = ['ipsec', 'status']
+            status_result = subprocess.run(status_cmd, capture_output=True, timeout=5)
+            
+            if status_result.returncode == 0:
+                output = status_result.stdout.decode()
+                logger.debug(f"Configuration status output: {output[:300]}...")
+                
+                # Look for our connection in the output - format is "vpntest[number]:"
+                if 'vpntest[' in output or 'vpntest:' in output or 'vpntest ' in output:
+                    logger.debug("Configuration 'vpntest' found in status")
+                    return True
+                else:
+                    logger.debug("Configuration 'vpntest' not found in status output")
+                    
+                    # Try alternative check like debug script
+                    listconns_cmd = ['ipsec', 'listconns']
+                    listconns_result = subprocess.run(listconns_cmd, capture_output=True, timeout=5)
+                    if listconns_result.returncode == 0:
+                        listconns_output = listconns_result.stdout.decode()
+                        logger.debug(f"List connections output: {listconns_output[:200]}...")
+                        if 'vpntest' in listconns_output:
+                            logger.debug("Configuration found via listconns")
+                            return True
+                    
+                    return False
+            else:
+                logger.error(f"Status command failed: {status_result.stderr.decode()[:200]}...")
+                return False
+                
+        except Exception as e:
+            logger.error(f"Configuration verification failed: {e}")
+            return False
+
     def _ensure_clean_strongswan_state(self):
         """Ensure strongSwan is in a clean state before starting."""
         try:
