@@ -227,15 +227,14 @@ class VPNMonitor:
         
         # IPSec configuration for Synology DSM7 - FIXED peer ID issue
         # Based on server logs showing "no suitable connection for peer '@germain'"
-        # CRITICAL FIX: SA expires immediately - use manual connection with instant Quick Mode
+        # COPY EXACT WORKING CONFIG FROM synology_debug.sh
         config_content = f"""
 config setup
     charondebug="ike 2, knl 1, cfg 1"
     strictcrlpolicy=no
     uniqueids=no
-    nat_traversal=yes
 
-conn vpntest
+conn windows11_match
     type=transport
     keyexchange=ikev1
     left=%defaultroute
@@ -243,17 +242,20 @@ conn vpntest
     right={server['ip']}
     rightprotoport=17/1701
     authby=psk
-    auto=add
-    ike=3des-sha1-modp1024,aes256-sha1-modp1024,aes128-sha1-modp1024!
-    esp=3des-sha1,aes256-sha1,aes128-sha1!
+    auto=start
+    ike=aes256-sha1-modp2048,aes256-sha1-modp1024,3des-sha1-modp1024!
+    esp=aes256-sha1,3des-sha1!
     rekey=no
     leftid=%any
-    rightid={server['ip']}
-    aggressive=yes
-    ikelifetime=28800s
+    rightid=%any
+    aggressive=no
+    ikelifetime=86400s
     keylife=3600s
     dpdaction=none
-    forceencaps=no
+    forceencaps=yes
+    margintime=9m
+    rekeyfuzz=100%
+    closeaction=none
 """
         
         with open(config_file, 'w') as f:
@@ -599,44 +601,45 @@ password {server['password']}
                 connection_time = int((time.time() - start_time) * 1000)
                 return False, connection_time, "Failed to load IPSec configuration"
             
-            # CRITICAL: Start connection and L2TP simultaneously to beat SA expiry
-            logger.debug(f"Starting IPSec and L2TP simultaneously for {server['name']}")
+            # COPY EXACT WORKING APPROACH: auto=start means connection starts automatically
+            logger.debug(f"Using auto=start - connection should establish automatically for {server['name']}")
             
-            # Start xl2tpd FIRST (so it's ready when IPSec comes up)
-            xl2tpd_cmd = ['xl2tpd', '-c', '/etc/xl2tpd/xl2tpd.conf', '-C', '/var/run/xl2tpd/l2tp-control']
-            xl2tpd_process = subprocess.Popen(xl2tpd_cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-            time.sleep(1)  # Brief wait for xl2tpd to start
+            # Wait for auto-start to work (like debug script does)
+            time.sleep(3)
             
-            # Now bring up IPSec connection
-            up_cmd = ['ipsec', 'up', 'vpntest']
-            up_result = subprocess.run(up_cmd, capture_output=True, timeout=15)
-            up_output = up_result.stdout.decode() + " " + up_result.stderr.decode()
+            # Check status (like debug script does)
+            status_cmd = ['ipsec', 'statusall']
+            status_result = subprocess.run(status_cmd, capture_output=True, timeout=5)
+            status_output = status_result.stdout.decode() if status_result.returncode == 0 else "No status available"
             
-            logger.debug(f"IPSec up command output: {up_output}")
+            logger.debug(f"IPSec status output: {status_output}")
             
-            # Immediately try L2TP connection (don't wait for IPSec status check)
-            if "ESTABLISHED" in up_output or self._check_ipsec_status():
-                logger.debug(f"IPSec established, immediately starting L2TP for {server['name']}")
+            # Check if IPSec established
+            if "ESTABLISHED" in status_output and "SYNO: IPSEC success" in status_output:
+                logger.debug(f"IPSec established via auto=start, starting L2TP for {server['name']}")
                 
-                # Send L2TP connect command immediately
+                # Start xl2tpd
+                xl2tpd_cmd = ['xl2tpd', '-c', '/etc/xl2tpd/xl2tpd.conf', '-C', '/var/run/xl2tpd/l2tp-control']
+                xl2tpd_process = subprocess.Popen(xl2tpd_cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+                
+                # Wait for xl2tpd to start
+                time.sleep(3)
+                
+                # Send L2TP connect command
                 try:
                     if os.path.exists('/var/run/xl2tpd/l2tp-control'):
-                        connect_cmd = 'echo "c vpntest" > /var/run/xl2tpd/l2tp-control'
+                        connect_cmd = 'echo "c windows11_match" > /var/run/xl2tpd/l2tp-control'
                         control_result = subprocess.run(connect_cmd, shell=True, capture_output=True, timeout=5)
                         logger.debug(f"L2TP connect command result: {control_result.returncode}")
                     
-                    # Quick verification
-                    time.sleep(3)
+                    # Wait for L2TP connection
+                    time.sleep(10)
                     connection_time = int((time.time() - start_time) * 1000)
                     
                     if self._verify_vpn_connection():
                         return True, connection_time, None
                     else:
-                        # Check if IPSec is still up
-                        if self._check_ipsec_status():
-                            return False, connection_time, "IPSec up but L2TP tunnel not established"
-                        else:
-                            return False, connection_time, "IPSec SA expired during L2TP setup - server SA lifetime too short"
+                        return False, connection_time, "VPN tunnel establishment failed. IPSec up but L2TP not working"
                             
                 except Exception as e:
                     logger.debug(f"L2TP connection attempt failed: {e}")
@@ -646,15 +649,10 @@ password {server['password']}
             else:
                 connection_time = int((time.time() - start_time) * 1000)
                 
-                # Get detailed status for debugging
-                status_cmd = ['ipsec', 'statusall']
-                status_result = subprocess.run(status_cmd, capture_output=True, timeout=5)
-                status_info = status_result.stdout.decode() if status_result.returncode == 0 else "No status available"
-                
                 # Check for specific error patterns
-                error_details = self._analyze_ipsec_error(up_output, status_info)
+                error_details = self._analyze_ipsec_error(status_output, status_output)
                 
-                return False, connection_time, f"IPSec tunnel not established. {error_details}"
+                return False, connection_time, f"IPSec auto-start failed after 15s. {error_details}"
                 
         except subprocess.TimeoutExpired:
             connection_time = int((time.time() - start_time) * 1000)
