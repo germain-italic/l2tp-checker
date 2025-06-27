@@ -264,6 +264,13 @@ ORDER BY last_seen DESC;
 - Check Synology VPN Server logs in Log Center for connection attempts
 - Ensure UDP ports 500, 4500, 1701 are allowed in Synology firewall
 
+**Debug Synology server logs:**
+```bash
+# SSH to your Synology NAS and monitor authentication logs in real-time
+tail -f /var/log/auth.log
+```
+This will show live VPN connection attempts and authentication failures on the Synology server side.
+
 ### Debugging Steps
 
 1. **Run the debug script for detailed analysis:**
