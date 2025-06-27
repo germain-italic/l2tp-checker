@@ -1,15 +1,16 @@
 version: '3.8'
 
 networks:
-  vpn-bridge:
-    driver: macvlan
+  vpn-bypass:
+    driver: bridge
     driver_opts:
-      parent: eth0
+      com.docker.network.bridge.name: vpn-bypass
+      com.docker.network.driver.mtu: 1500
     ipam:
+      driver: default
       config:
-        - subnet: 172.25.128.0/20
-          gateway: 172.25.128.1
-          ip_range: 172.25.140.0/24
+        - subnet: 172.30.0.0/16
+          gateway: 172.30.0.1
 
 services:
   vpn-monitor:
@@ -29,9 +30,15 @@ services:
       - vpn-logs:/var/log/vpn-monitor
       - /lib/modules:/lib/modules:ro
     
-    # Use macvlan network for direct network access (like VirtualBox bridge mode)
+    # Use custom bridge network (better for WSL2)
     networks:
-      - vpn-bridge
+      vpn-bypass:
+        ipv4_address: 172.30.0.10
+    
+    # DNS configuration to ensure proper resolution
+    dns:
+      - 8.8.8.8
+      - 1.1.1.1
     
     # Environment variables (can be overridden by .env file)
     environment:
