@@ -258,12 +258,13 @@ conn windows11_match
         
         with open(config_file, 'w') as f:
             f.write(config_content)
-        
         # Create secrets file using the EXACT format from debug script
-# Use %any to avoid peer ID format issues
-%any {server['ip']} : PSK "{server['shared_key']}"
-{server['ip']} %any : PSK "{server['shared_key']}"
-"""
+        # Use string concatenation to avoid % formatting issues
+        secrets_content = "# strongSwan IPsec secrets file\n"
+        secrets_content += "# Use %any to avoid peer ID format issues\n"
+        secrets_content += f"%any {server['ip']} : PSK \"{server['shared_key']}\"\n"
+        secrets_content += f"{server['ip']} %any : PSK \"{server['shared_key']}\"\n"
+        
         with open(secrets_file, 'w') as f:
             f.write(secrets_content)
         os.chmod(secrets_file, 0o600)
