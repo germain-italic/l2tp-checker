@@ -52,6 +52,19 @@ A containerized VPN monitoring system that performs actual L2TP/IPSec VPN tunnel
 
 ## Configuration
 
+### WSL2 + Windows VPN Important Note
+
+**⚠️ If you're running this in WSL2 while Windows has an active VPN connection:**
+
+The container will detect this situation and provide guidance. You have several options:
+
+1. **🛑 Temporarily disconnect Windows VPN** during monitoring (recommended for accurate testing)
+2. **⚙️ Configure split tunneling** in your Windows VPN client to exclude your test destinations
+3. **🖥️ Run monitoring from a separate Linux system** without VPN
+4. **✅ Continue with VPN IP** (useful for testing the monitoring system functionality)
+
+The monitor will automatically detect this scenario and log appropriate warnings with guidance.
+
 ### VPN Server Configuration
 
 Configure your VPN servers in the `.env` file:
