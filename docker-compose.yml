@@ -18,9 +18,6 @@ services:
       - vpn-logs:/var/log/vpn-monitor
       - /lib/modules:/lib/modules:ro
     
-    # Network configuration
-    network_mode: host
-    
     # Environment variables (can be overridden by .env file)
     environment:
       - PYTHONUNBUFFERED=1
