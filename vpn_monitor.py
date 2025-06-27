@@ -63,6 +63,7 @@ class VPNMonitor:
         
         self.vpn_timeout = int(os.getenv('VPN_TIMEOUT', 30))
         self.monitor_id = os.getenv('MONITOR_ID', '')
+        self.poll_interval = int(os.getenv('POLL_INTERVAL_MINUTES', 5))
         
         # Parse VPN servers
         self.vpn_servers = self._parse_vpn_servers()
@@ -903,10 +904,56 @@ password {server['password']}
         print("📋 Results logged to database for historical tracking")
         print("="*60)
 
+    def run_continuous_monitoring(self):
+        """Run continuous VPN monitoring with configured polling interval."""
+        if self.poll_interval <= 0:
+            logger.info("Continuous monitoring disabled (POLL_INTERVAL_MINUTES=0), running single test")
+            self.run_tests()
+            return
+        
+        logger.info(f"🔄 Starting continuous VPN monitoring (polling every {self.poll_interval} minutes)")
+        logger.info(f"📡 Monitoring {len(self.vpn_servers)} VPN servers")
+        logger.info(f"🖥️  System: {self.system_info['hostname']} ({self.system_info['os']})")
+        logger.info(f"🌐 Public IP: {self.system_info['public_ip']}")
+        logger.info(f"📦 Version: {VERSION}")
+        logger.info("🛑 Press Ctrl+C or send SIGTERM to stop gracefully")
+        print()
+        
+        iteration = 0
+        
+        try:
+            while True:
+                iteration += 1
+                current_time = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+                
+                logger.info(f"🔍 Starting monitoring iteration #{iteration} at {current_time}")
+                
+                # Run the VPN tests
+                self.run_tests()
+                
+                # Calculate next run time
+                next_run = datetime.now()
+                next_run = next_run.replace(second=0, microsecond=0)
+                next_run_timestamp = next_run.timestamp() + (self.poll_interval * 60)
+                next_run_formatted = datetime.fromtimestamp(next_run_timestamp).strftime('%Y-%m-%d %H:%M:%S')
+                
+                logger.info(f"💤 Monitoring iteration #{iteration} completed. Next run scheduled for {next_run_formatted}")
+                logger.info(f"⏱️  Sleeping for {self.poll_interval} minutes...")
+                print()
+                
+                # Sleep for the configured interval
+                time.sleep(self.poll_interval * 60)
+                
+        except KeyboardInterrupt:
+            logger.info("🛑 Continuous monitoring stopped by user (Ctrl+C)")
+        except Exception as e:
+            logger.error(f"💥 Fatal error in continuous monitoring: {e}")
+            raise
 
 def signal_handler(signum, frame):
     """Handle shutdown signals gracefully."""
-    logger.info("Received shutdown signal, cleaning up...")
+    signal_name = "SIGTERM" if signum == signal.SIGTERM else "SIGINT" if signum == signal.SIGINT else f"Signal {signum}"
+    logger.info(f"🛑 Received {signal_name}, shutting down gracefully...")
     sys.exit(0)
 
 
@@ -921,16 +968,31 @@ def main():
         try:
             monitor = VPNMonitor()
             if monitor.health_check():
+                print("✅ Health check passed")
                 sys.exit(0)
             else:
+                print("❌ Health check failed")
                 sys.exit(1)
         except Exception as e:
             logger.error(f"Health check error: {e}")
             sys.exit(1)
     
+    # Check for single-run mode
+    if len(sys.argv) > 1 and sys.argv[1] == '--single-run':
+        try:
+            monitor = VPNMonitor()
+            monitor.run_tests()
+        except KeyboardInterrupt:
+            logger.info("Single run interrupted by user")
+            sys.exit(0)
+        except Exception as e:
+            logger.error(f"Fatal error in single run: {e}")
+            sys.exit(1)
+        return
+    
     try:
         monitor = VPNMonitor()
-        monitor.run_tests()
+        monitor.run_continuous_monitoring()
     except KeyboardInterrupt:
         logger.info("Monitoring interrupted by user")
         sys.exit(0)

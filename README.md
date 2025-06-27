@@ -5,6 +5,7 @@ A containerized VPN monitoring system that performs actual L2TP/IPSec VPN tunnel
 ## Features
 
 - 🔒 **Full VPN tunnel testing** with native Linux VPN clients (strongSwan + xl2tpd)
+- 🔄 **Continuous monitoring** with configurable polling intervals
 - 🐳 **Containerized deployment** for consistent testing environments
 - 🔐 **Complete L2TP/IPSec authentication** with username/password/shared key
 - 🌐 **Network routing verification** through established VPN tunnels
@@ -28,22 +29,25 @@ A containerized VPN monitoring system that performs actual L2TP/IPSec VPN tunnel
    mysql -u your_username -p your_database < supabase/migrations/20250626084019_yellow_canyon.sql
    ```
 
-3. **Run with Docker:**
+3. **Start continuous monitoring:**
    ```bash
-   # Build and run
-   docker-compose up --build
+   # Start continuous monitoring (recommended)
+   docker-compose up -d --build
    
-   # Run in background
-   docker-compose up -d
-   
-   # View logs
+   # View real-time logs
    docker-compose logs -f vpn-monitor
    ```
 
-4. **Schedule monitoring:**
+4. **Monitor status:**
    ```bash
-   # Add to crontab for periodic testing
-   */5 * * * * cd /path/to/l2tp-checker && docker-compose up --no-deps vpn-monitor >/dev/null 2>&1
+   # Check container status
+   docker-compose ps
+   
+   # View recent logs
+   docker-compose logs -f vpn-monitor
+   
+   # Check health
+   docker-compose exec vpn-monitor python3 /app/vpn_monitor.py --health-check
    ```
 
 ## Configuration
@@ -70,16 +74,27 @@ DB_NAME=vpn_monitoring
 DB_USER=your_db_username
 DB_PASSWORD=your_db_password
 
-# Optional Configuration
+# Continuous Monitoring Configuration
+POLL_INTERVAL_MINUTES=5        # Check VPN servers every 5 minutes
 VPN_TIMEOUT=30
 MONITOR_ID=docker-monitor-01
 ```
+
+### Polling Configuration
+
+The monitor supports continuous operation with configurable polling intervals:
+
+- **`POLL_INTERVAL_MINUTES=5`**: Monitor every 5 minutes (recommended)
+- **`POLL_INTERVAL_MINUTES=1`**: Monitor every minute (intensive monitoring)
+- **`POLL_INTERVAL_MINUTES=15`**: Monitor every 15 minutes (light monitoring)
+- **`POLL_INTERVAL_MINUTES=0`**: Disable continuous mode (single run only)
 
 ## Docker Architecture
 
 ### Container Features
 - **Base Image**: `debian:bookworm-slim` for optimal compatibility
 - **VPN Clients**: strongSwan (IPSec) + xl2tpd (L2TP)
+- **Continuous Operation**: Internal scheduling eliminates need for host cron jobs
 - **Privileges**: Runs with `NET_ADMIN` capabilities for VPN operations
 - **Networking**: Uses host networking for direct VPN access
 - **Persistence**: Logs stored in Docker volumes
@@ -115,32 +130,32 @@ And two views for easy reporting:
 
 ### Basic Operations
 ```bash
-# Build and run
-docker-compose up --build
+# Start continuous monitoring (recommended)
+docker-compose up -d --build
 
-# Run in background
-docker-compose up -d
-
-# View logs
+# View real-time logs
 docker-compose logs -f vpn-monitor
 
-# Stop container
+# Check container status
+docker-compose ps
+
+# Stop monitoring
 docker-compose down
 
-# Rebuild after changes
-docker-compose build --no-cache
+# Restart monitoring
+docker-compose restart vpn-monitor
 
-# Quick rebuild (uses cache)
+# Rebuild after configuration changes
 docker-compose build
-
-# Run one-time test
-docker-compose run --rm vpn-monitor
 ```
 
-### Debugging
+### Testing and Debugging
 ```bash
 # IMPORTANT: Stop the monitor first to avoid VPN resource conflicts
 docker-compose down
+
+# Run a single test (no continuous monitoring)
+docker-compose run --rm vpn-monitor python3 /app/vpn_monitor.py --single-run
 
 # Run Synology-specific debug script
 docker-compose run --rm vpn-monitor /app/synology_debug.sh
@@ -149,23 +164,14 @@ docker-compose run --rm vpn-monitor /app/synology_debug.sh
 docker-compose run --rm vpn-monitor bash
 
 # After debugging, restart the monitor
-docker-compose up -d
+docker-compose up -d --build
 
 # Check VPN tools are available
 docker-compose run --rm vpn-monitor ipsec --version
 docker-compose run --rm vpn-monitor xl2tpd --version
 
-# Manual test run
-docker-compose run --rm vpn-monitor python3 /app/vpn_monitor.py
-
 # Health check
 docker-compose run --rm vpn-monitor python3 /app/vpn_monitor.py --health-check
-
-# View real-time logs
-docker-compose logs -f vpn-monitor
-
-# View recent logs (last 50 lines)
-docker-compose logs --tail=50 vpn-monitor
 ```
 
 **CRITICAL:** Debug scripts require exclusive access to VPN resources. Always stop the running monitor before debugging:
@@ -180,16 +186,36 @@ docker-compose down
 docker-compose run --rm vpn-monitor /app/synology_debug.sh  # ✅ WORKS
 ```
 
-## Scheduling and Automation
+## Deployment and Automation
 
-### Docker Cron (Recommended)
+### Continuous Monitoring (Recommended)
+
+The VPN monitor now runs continuously with internal scheduling, eliminating the need for host cron jobs:
+
+1. **Simple deployment:**
+   ```bash
+   # Start monitoring in background
+   docker-compose up -d
+   
+   # Monitor will automatically restart on host reboot (restart: unless-stopped)
+   # Check logs anytime with: docker-compose logs -f vpn-monitor
+   ```
+
+2. **Automatic startup on host reboot:**
+   The container is configured with `restart: unless-stopped`, so it will automatically start when the Docker daemon starts on host reboot.
+
+3. **Configuration via environment variables:**
+   - Set `POLL_INTERVAL_MINUTES=5` in `.env` for 5-minute monitoring intervals
+   - Change interval without rebuilding: just restart the container
+   - Set to `0` to disable continuous mode for one-time testing
+
+### Legacy Cron Support (Optional)
+
+If you prefer the old cron-based approach, set `POLL_INTERVAL_MINUTES=0` and use:
 ```bash
-# Add to host crontab
-*/5 * * * * cd /path/to/l2tp-checker && docker-compose up --no-deps vpn-monitor >/dev/null 2>&1
+# Add to host crontab for single-run mode
+*/5 * * * * cd /path/to/l2tp-checker && docker-compose run --rm vpn-monitor python3 /app/vpn_monitor.py --single-run >/dev/null 2>&1
 ```
-
-### Docker Swarm/Kubernetes
-The container can be deployed in orchestration platforms with appropriate scheduling configurations.
 
 ## Monitoring Dashboard Queries
 
