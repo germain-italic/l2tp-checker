@@ -615,45 +615,10 @@ password {server['password']}
             
             if reload_result.returncode == 0:
                 logger.debug("✓ Configuration reloaded successfully")
+                return True
             else:
-                logger.debug("✗ Reload failed, trying alternative loading method...")
-                
-                # Alternative: restart with new config (like debug script)
-                logger.debug("Restarting strongSwan with new configuration...")
-                
-                # Stop first
-                stop_result = subprocess.run(['ipsec', 'stop'], capture_output=True, timeout=5)
-                logger.debug(f"ipsec stop result: {stop_result.returncode}")
-                time.sleep(2)
-                
-                # Start again - find charon binary first
-                charon_paths = ['/usr/lib/ipsec/charon', '/usr/libexec/ipsec/charon', '/usr/sbin/charon', 'charon']
-                charon_binary = None
-                for path in charon_paths:
-                    if os.path.exists(path):
-                        charon_binary = path
-                        break
-                
-                if charon_binary:
-                    charon_cmd = [charon_binary, '--use-syslog', '--debug-ike', '1', '--debug-knl', '1']
-                    charon_process = subprocess.Popen(charon_cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-                    time.sleep(3)
-                else:
-                    logger.debug("No charon binary found for restart")
-                    return False
-                
-                pgrep_result = subprocess.run(['pgrep', 'charon'], capture_output=True, timeout=5)
-                if pgrep_result.returncode == 0:
-                    logger.debug("✓ strongSwan restarted with new configuration")
-                else:
-                    logger.error("❌ Failed to restart strongSwan")
-                    return False
-            
-            # Wait for configuration to be processed like debug script
-            time.sleep(3)
-            
-            # Verify configuration was loaded
-            return self._verify_config_loaded()
+                logger.debug(f"✗ Reload failed: {reload_result.stderr.decode()}")
+                return False
                     
         except Exception as e:
             logger.error(f"Failed to load IPSec configuration: {e}")
@@ -736,70 +701,25 @@ password {server['password']}
             
             # Wait for auto=start to trigger connection (like debug script)
             logger.debug(f"Waiting for auto=start connection for {server['name']}")
-            time.sleep(3)
+            time.sleep(2)
             
             # Check status to see if auto=start worked
             status_cmd = ['ipsec', 'statusall']
             status_result = subprocess.run(status_cmd, capture_output=True, timeout=5)
             status_output = status_result.stdout.decode() if status_result.returncode == 0 else "No status available"
-            logger.debug(f"IPSec status output: {status_output}")
+            logger.debug(f"IPSec status output: {status_output[:500]}...")
             
             # Check if connection was established
             connection_time = int((time.time() - start_time) * 1000)
             
             if "ESTABLISHED" in status_output:
-                logger.debug(f"IPSec established, starting L2TP for {server['name']}")
-                
-                # Start xl2tpd
-                xl2tpd_cmd = ['xl2tpd', '-c', '/etc/xl2tpd/xl2tpd.conf', '-C', '/var/run/xl2tpd/l2tp-control']
-                xl2tpd_process = subprocess.Popen(xl2tpd_cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-                
-                # Wait for xl2tpd to start properly
-                time.sleep(3)
-                
-                # Attempt L2TP connection
-                try:
-                    # Check if control file exists
-                    if not os.path.exists('/var/run/xl2tpd/l2tp-control'):
-                        time.sleep(2)  # Wait a bit more
-                    
-                    if os.path.exists('/var/run/xl2tpd/l2tp-control'):
-                        # Send connect command via echo to control socket
-                        connect_cmd = 'echo "c vpntest" > /var/run/xl2tpd/l2tp-control'
-                        control_result = subprocess.run(connect_cmd, shell=True, capture_output=True, timeout=10)
-                        logger.debug(f"L2TP connect command result: {control_result.returncode}")
-                    else:
-                        logger.debug("L2TP control file not found")
-                    
-                    # Wait for connection establishment
-                    time.sleep(10)
-                    
-                except Exception as e:
-                    logger.debug(f"L2TP connection attempt failed: {e}")
-                
-                # Check if connection was established
-                if self._verify_vpn_connection():
-                    return True, connection_time, None
-                else:
-                    # Get more detailed error information
-                    status_cmd = ['ipsec', 'statusall']
-                    status_result = subprocess.run(status_cmd, capture_output=True, timeout=5)
-                    status_info = status_result.stdout.decode() if status_result.returncode == 0 else "No status available"
-                    
-                    # Check xl2tpd process
-                    xl2tpd_status = "xl2tpd not running"
-                    try:
-                        xl2tpd_check = subprocess.run(['pgrep', 'xl2tpd'], capture_output=True, timeout=5)
-                        if xl2tpd_check.returncode == 0:
-                            xl2tpd_status = "xl2tpd running"
-                    except:
-                        pass
-                    
-                    return False, connection_time, f"VPN tunnel establishment failed. IPSec status: {status_info}. L2TP status: {xl2tpd_status}"
+                logger.info(f"🎉 SUCCESS: IPSec tunnel established with {server['name']}!")
+                return True, connection_time, None
             
             else:
                 # Check for specific error patterns
-                error_details = self._analyze_ipsec_error(status_output, status_output)
+                error_details = self._analyze_ipsec_error(status_output, status_output) 
+                return False, connection_time, error_details
                 
             
         except subprocess.TimeoutExpired:
