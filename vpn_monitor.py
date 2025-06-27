@@ -253,6 +253,8 @@ conn vpntest
     dpddelay=300s
     dpdtimeout=90s
     forceencaps=no
+"""
+        
         with open(config_file, 'w') as f:
             f.write(config_content)
         
