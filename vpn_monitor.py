@@ -633,10 +633,6 @@ password {server['password']}
             # Check for specific error patterns
             error_details = self._analyze_ipsec_error(final_status, final_status)
             return False, connection_time, error_details
-            
-                return False, connection_time, error_details
-                
-            
         except subprocess.TimeoutExpired:
             connection_time = int((time.time() - start_time) * 1000)
             return False, connection_time, "VPN connection timeout"
