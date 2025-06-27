@@ -240,7 +240,7 @@ conn vpntest
     right={server['ip']}
     rightprotoport=17/1701
     authby=psk
-    auto=add
+    auto=start
     ike=3des-sha1-modp1024,aes256-sha1-modp1024,aes128-sha1-modp1024!
     esp=3des-sha1,aes256-sha1,aes128-sha1!
     rekey=no
@@ -253,8 +253,6 @@ conn vpntest
     dpddelay=300s
     dpdtimeout=90s
     forceencaps=no
-"""
-        
         with open(config_file, 'w') as f:
             f.write(config_content)
         
@@ -590,45 +588,18 @@ password {server['password']}
                 connection_time = int((time.time() - start_time) * 1000)
                 return False, connection_time, "Failed to load IPSec configuration"
             
-            # COPY EXACT WORKING APPROACH: manual ipsec up like debug script
-            logger.debug(f"Attempting to bring up IPSec connection for {server['name']}")
-            
-            # Wait for configuration to be fully loaded
+            # Wait for auto=start to trigger connection
+            logger.debug(f"Waiting for auto=start connection for {server['name']}")
             time.sleep(3)
             
-            # Start packet capture like debug script
-            logger.debug("Starting packet capture...")
-            tcpdump_cmd = ['timeout', '30', 'tcpdump', '-i', 'any', '-n', 'host', server['ip'], 
-                          'and', 'port', '500', '-w', '/tmp/vpn_debug.pcap']
-            tcpdump_process = subprocess.Popen(tcpdump_cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-            
-            # Wait for tcpdump to start
-            time.sleep(2)
-            
-            # Bring up the connection - EXACT same as debug script
-            up_cmd = ['ipsec', 'up', 'vpntest']
-            up_result = subprocess.run(up_cmd, capture_output=True, timeout=25)
-            up_output = up_result.stdout.decode() + " " + up_result.stderr.decode()
-            
-            logger.debug(f"IPSec up command output: {up_output}")
-            
-            # Wait for connection establishment
-            time.sleep(5)
-            
-            # Check status - EXACT same as debug script
+            # Check status to see if auto=start worked
             status_cmd = ['ipsec', 'statusall']
             status_result = subprocess.run(status_cmd, capture_output=True, timeout=5)
             status_output = status_result.stdout.decode() if status_result.returncode == 0 else "No status available"
+            logger.debug(f"IPSec status output: {status_output}")
             
-            # Stop tcpdump
-            try:
-                tcpdump_process.terminate()
-                tcpdump_process.wait(timeout=5)
-            except:
-                pass
-            
-            # Check if connection was established - EXACT same logic as debug script
-            if "ESTABLISHED" in up_output or "ESTABLISHED" in status_output:
+            # Check if connection was established
+            if "ESTABLISHED" in status_output:
                 logger.debug(f"IPSec established, starting L2TP for {server['name']}")
                 
                 # Start xl2tpd
@@ -684,15 +655,9 @@ password {server['password']}
             else:
                 connection_time = int((time.time() - start_time) * 1000)
                 
-                # Get detailed status for debugging
-                status_cmd = ['ipsec', 'statusall']
-                status_result = subprocess.run(status_cmd, capture_output=True, timeout=5)
-                status_info = status_result.stdout.decode() if status_result.returncode == 0 else "No status available"
-                
                 # Check for specific error patterns
-                error_details = self._analyze_ipsec_error(up_output, status_info)
+                error_details = self._analyze_ipsec_error(status_output, status_output)
                 
-                return False, connection_time, f"IPSec tunnel not established after 20s. {error_details}"
                 
         except subprocess.TimeoutExpired:
             connection_time = int((time.time() - start_time) * 1000)
