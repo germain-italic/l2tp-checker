@@ -43,7 +43,7 @@ A containerized VPN monitoring system that performs actual L2TP/IPSec VPN tunnel
 4. **Schedule monitoring:**
    ```bash
    # Add to crontab for periodic testing
-   */5 * * * * cd /path/to/l2tp-checker && docker-compose up --no-deps vpn-monitor
+   */5 * * * * cd /path/to/l2tp-checker && docker-compose up --no-deps vpn-monitor >/dev/null 2>&1
    ```
 
 ## Configuration
@@ -113,18 +113,6 @@ And two views for easy reporting:
 
 ## Docker Commands
 
-### Build Optimization
-```bash
-# Fast incremental builds (uses cache effectively)
-docker-compose build
-
-# Force complete rebuild (only when needed)
-docker-compose build --no-cache
-
-# Build with specific target (if using multi-stage)
-docker-compose build --target production
-```
-
 ### Basic Operations
 ```bash
 # Build and run
@@ -154,30 +142,24 @@ docker-compose run --rm vpn-monitor
 # IMPORTANT: Stop the monitor first to avoid VPN resource conflicts
 docker-compose down
 
-# Run debug script in a fresh container
-docker-compose run --rm vpn-monitor /app/vpn_debug.sh
-
-# Or run Synology-specific debug
+# Run Synology-specific debug script
 docker-compose run --rm vpn-monitor /app/synology_debug.sh
 
-# Or run server connectivity test
-docker-compose run --rm vpn-monitor /app/test_server.sh vpn_server_address
-
-# Access container shell
+# Access container shell for manual debugging
 docker-compose run --rm vpn-monitor bash
 
 # After debugging, restart the monitor
 docker-compose up -d
 
-# Check VPN tools
+# Check VPN tools are available
 docker-compose run --rm vpn-monitor ipsec --version
 docker-compose run --rm vpn-monitor xl2tpd --version
 
 # Manual test run
-docker-compose run --rm vpn-monitor python3 vpn_monitor.py
+docker-compose run --rm vpn-monitor python3 /app/vpn_monitor.py
 
 # Health check
-docker-compose run --rm vpn-monitor python3 vpn_monitor.py --health-check
+docker-compose run --rm vpn-monitor python3 /app/vpn_monitor.py --health-check
 
 # View real-time logs
 docker-compose logs -f vpn-monitor
@@ -240,23 +222,6 @@ ORDER BY last_seen DESC;
 
 ## Troubleshooting
 
-### Synology NAS Compatibility
-
-**Synology DSM7 L2TP/IPSec servers:**
-- If you cannot enable "SHA2-256 compatible mode" due to Windows/macOS client compatibility
-- The monitor automatically uses legacy encryption (3DES/MD5) for maximum compatibility
-- This configuration works with Windows 11 and macOS built-in VPN clients
-- Check Synology VPN Server logs in Log Center for connection attempts
-- Ensure UDP ports 500, 4500, 1701 are allowed in Synology firewall
-
-### Build Performance
-
-**Slow builds:**
-- Use `docker-compose build` instead of `--no-cache` for incremental builds
-- Ensure `.dockerignore` is properly configured to exclude unnecessary files
-- Check Docker daemon has sufficient disk space and memory
-- Consider using Docker BuildKit: `DOCKER_BUILDKIT=1 docker-compose build`
-
 ### Common Issues
 
 1. **Docker Permission Issues**
@@ -290,24 +255,27 @@ ORDER BY last_seen DESC;
    - Verify database connectivity from container
    - Ensure VPN tools are properly installed
 
-### Logs
+### Synology NAS Compatibility
 
-**Docker logs:**
-- Container logs: `docker-compose logs -f vpn-monitor`
-- Volume logs: `/var/log/vpn-monitor/` (mounted volume)
-- Health check logs: `docker-compose exec vpn-monitor python3 vpn_monitor.py --health-check`
+**Synology DSM7 L2TP/IPSec servers:**
+- If you cannot enable "SHA2-256 compatible mode" due to Windows/macOS client compatibility
+- The monitor automatically uses legacy encryption (3DES/MD5) for maximum compatibility
+- This configuration works with Windows 11 and macOS built-in VPN clients
+- Check Synology VPN Server logs in Log Center for connection attempts
+- Ensure UDP ports 500, 4500, 1701 are allowed in Synology firewall
 
-### Debugging
+### Debugging Steps
 
-1. **Test Docker installation:**
+1. **Run the debug script for detailed analysis:**
    ```bash
-   docker-compose exec vpn-monitor python3 vpn_monitor.py --health-check
+   docker-compose down
+   docker-compose run --rm vpn-monitor /app/synology_debug.sh
    ```
 
 2. **Check VPN tools in container:**
    ```bash
-   docker-compose exec vpn-monitor ipsec --version
-   docker-compose exec vpn-monitor xl2tpd --version
+   docker-compose run --rm vpn-monitor ipsec --version
+   docker-compose run --rm vpn-monitor xl2tpd --version
    ```
 
 3. **Verify database connection:**
@@ -316,28 +284,41 @@ ORDER BY last_seen DESC;
    mysql -h your-host -u your-user -p your-database
    
    # From container
-   docker-compose exec vpn-monitor python3 -c "
+   docker-compose run --rm vpn-monitor python3 -c "
    from vpn_monitor import VPNMonitor
    monitor = VPNMonitor()
    print('DB connection:', monitor.health_check())
    "
    ```
 
+4. **Test Docker installation:**
+   ```bash
+   docker-compose run --rm vpn-monitor python3 /app/vpn_monitor.py --health-check
+   ```
+
+### Logs
+
+**Docker logs:**
+- Container logs: `docker-compose logs -f vpn-monitor`
+- Volume logs: `/var/log/vpn-monitor/` (mounted volume)
+- Health check logs: `docker-compose run --rm vpn-monitor python3 /app/vpn_monitor.py --health-check`
+
 ## File Structure
 
 ```
 l2tp-checker/
-├── Dockerfile             # Docker container definition
-├── docker-compose.yml     # Docker Compose configuration
-├── vpn_monitor.py         # Main monitoring script
-├── run_monitor.sh         # Execution wrapper
-├── requirements.txt        # Python dependencies
-├── .env.dist             # Environment template
-├── .env                  # Your configuration
-├── .dockerignore         # Docker ignore file
-├── .gitignore            # Git ignore file
-├── supabase/migrations/   # Database schema
-└── README.md              # This file
+├── Dockerfile                 # Docker container definition
+├── docker-compose.yml         # Docker Compose configuration
+├── vpn_monitor.py             # Main monitoring script
+├── run_monitor.sh             # Container execution wrapper
+├── synology_debug.sh          # Synology-specific debugging script
+├── requirements.txt           # Python dependencies
+├── .env.dist                  # Environment template
+├── .env                       # Your configuration (create from .env.dist)
+├── supabase/migrations/       # Database schema
+│   └── 20250626084019_yellow_canyon.sql
+├── LICENSE                    # MIT License
+└── README.md                  # This file
 ```
 
 ## Security Considerations
