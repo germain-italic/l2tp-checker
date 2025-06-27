@@ -21,3 +21,4 @@ echo ""
 cd "$(dirname "$0")"
 
 # Execute the VPN monitor directly with Python 3
+exec python3 vpn_monitor.py "$@"
